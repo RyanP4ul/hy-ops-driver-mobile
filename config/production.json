@@ -1,0 +1,4 @@
+{
+  "API_URL": "https://hy-ops-frontend.vercel.app/api",
+  "WS_URL": "wss://hy-ops-backend.onrender.com/ws"
+}
