@@ -4,12 +4,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'app.dart';
+import 'services/sync_scheduler.dart';
 
 Future<void> main() async {
   final binding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: binding);
   try {
     await dotenv.load(isOptional: true);
+    try {
+      await SyncScheduler.initialize();
+    } catch (_) {
+      /* Foreground sync remains available. */
+    }
     final prefs = await SharedPreferences.getInstance();
     runApp(HyOpsApp(prefs: prefs));
   } catch (_) {

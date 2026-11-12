@@ -41,22 +41,21 @@ dependencies:
   dio: ^5.11.1
   dio_cookie_manager: ^3.5.0
   cookie_jar: ^4.0.9
-  forui: ^0.27.6
   forui_lucide: ^0.27.0
   geolocator: ^14.1.1
   flutter_native_splash: ^2.4.8
   flutter_localizations:
     sdk: flutter
-  shadcn_ui: ^0.0.0
   latlong2: ^0.10.1
   flutter_map: ^8.3.2
-  lucide_icons_flutter: ^4.0.1
   shared_preferences: ^2.5.6
   image_picker: ^1.2.4
   flutter_launcher_icons: ^0.14.4
   drift: ^2.35.3
   crypto: ^3.0.7
   path_provider: ^2.1.6
+  workmanager: 0.10.10
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/icons.dart';
 import '../../core/palette.dart';
 import 'route_overlay.dart';
 
@@ -15,6 +16,8 @@ class RoadRouteMap extends StatefulWidget {
   final TileProvider? tileProvider;
   final Widget? header;
   final ValueChanged<bool>? onVisibilityChanged;
+  final double attributionBottomOffset;
+
   const RoadRouteMap({
     super.key,
     required this.route,
@@ -22,6 +25,7 @@ class RoadRouteMap extends StatefulWidget {
     this.tileProvider,
     this.header,
     this.onVisibilityChanged,
+    this.attributionBottomOffset = 0,
   });
 
   @override
@@ -104,6 +108,23 @@ class _RoadRouteMapState extends State<RoadRouteMap>
     _motion.forward(from: 0);
   }
 
+  void _fitRoute() {
+    if (!_ready || widget.route.isEmpty) return;
+    _motion.stop();
+    setState(() => _paused = true);
+    final points = <LatLng>[...widget.route];
+    final loc = _location;
+    if (loc != null) points.add(loc);
+    final bounds = LatLngBounds.fromPoints(points);
+    _map.fitCamera(
+      CameraFit.bounds(
+        bounds: bounds,
+        padding: const EdgeInsets.fromLTRB(48, 120, 48, 180),
+      ),
+    );
+    _map.rotate(0);
+  }
+
   void _animate() {
     if (!_ready || !mounted) return;
     final t = Curves.easeInOutCubic.transform(_motion.value);
@@ -130,173 +151,274 @@ class _RoadRouteMapState extends State<RoadRouteMap>
   }
 
   @override
-  Widget build(BuildContext context) => Stack(
-    fit: StackFit.expand,
-    children: [
-      Semantics(
-        label: 'Road route map',
-        hint: _uiVisible
-            ? 'Tap to hide route controls'
-            : 'Tap to show route controls',
-        onTap: _toggleUi,
-        child: FlutterMap(
-          mapController: _map,
-          options: MapOptions(
-            initialCenter: _location ?? widget.route.first,
-            initialZoom: 16.5,
-            minZoom: 3,
-            maxZoom: 19,
-            // Use the map's tap recognizer so drags, pinches, long presses and
-            // double-tap zoom do not toggle the interface.
-            onTap: (tapPosition, point) => _toggleUi(),
-            onMapReady: () {
-              _ready = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _follow(animate: false);
-              });
-            },
-            onPositionChanged: (_, hasGesture) {
-              if (hasGesture && !_paused) {
-                _motion.stop();
-                setState(() => _paused = true);
-              }
-            },
-          ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.hyops.driver',
-              tileProvider: widget.tileProvider,
+  Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tileLayer = TileLayer(
+      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      userAgentPackageName: 'com.hyops.driver',
+      tileProvider: widget.tileProvider,
+    );
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Semantics(
+          label: 'Road route map',
+          hint: _uiVisible
+              ? 'Tap to hide route controls'
+              : 'Tap to show route controls',
+          onTap: _toggleUi,
+          child: FlutterMap(
+            mapController: _map,
+            options: MapOptions(
+              initialCenter: _location ?? widget.route.first,
+              initialZoom: 16.5,
+              minZoom: 3,
+              maxZoom: 19,
+              // Use the map's tap recognizer so drags, pinches, long presses and
+              // double-tap zoom do not toggle the interface.
+              onTap: (tapPosition, point) => _toggleUi(),
+              onMapReady: () {
+                _ready = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _follow(animate: false);
+                });
+              },
+              onPositionChanged: (_, hasGesture) {
+                if (hasGesture && !_paused) {
+                  _motion.stop();
+                  setState(() => _paused = true);
+                }
+              },
             ),
-            PolylineLayer(
-              polylines: [
-                Polyline(
-                  points: widget.route,
-                  strokeWidth: 5,
-                  color: P.primary,
-                ),
-              ],
-            ),
-            MarkerLayer(
-              markers: [
-                Marker(
-                  point: widget.route.last,
-                  width: 44,
-                  height: 44,
-                  child: const Icon(
-                    Icons.location_on,
-                    color: Colors.red,
-                    size: 36,
+            children: [
+              if (isDark)
+                ColorFiltered(
+                  colorFilter: const ColorFilter.matrix([
+                    -0.82, 0, 0, 0, 235,
+                    0, -0.82, 0, 0, 240,
+                    0, 0, -0.78, 0, 248,
+                    0, 0, 0, 1, 0,
+                  ]),
+                  child: tileLayer,
+                )
+              else
+                tileLayer,
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: widget.route,
+                    strokeWidth: 5.5,
+                    color: c.primary,
+                    borderStrokeWidth: 2,
+                    borderColor: Colors.white.withValues(alpha: 0.8),
                   ),
-                ),
-                if (_location != null)
+                ],
+              ),
+              MarkerLayer(
+                markers: [
                   Marker(
-                    point: _location!,
+                    point: widget.route.last,
                     width: 44,
                     height: 44,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: P.surface,
+                        color: c.danger,
                         shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2.5),
                         boxShadow: const [
                           BoxShadow(color: Colors.black26, blurRadius: 6),
                         ],
                       ),
-                      child: Transform.rotate(
-                        angle: _heading * math.pi / 180,
-                        child: Icon(
-                          Icons.navigation,
-                          color: P.primary,
-                          size: 30,
-                        ),
+                      child: const Icon(
+                        Ic.pin,
+                        color: Colors.white,
+                        size: 20,
                       ),
                     ),
                   ),
-              ],
-            ),
-            // Map attribution remains available in either visibility state.
-            const SafeArea(
-              top: false,
-              child: RichAttributionWidget(
-                attributions: [
-                  TextSourceAttribution('OpenStreetMap contributors'),
+                  if (_location != null)
+                    Marker(
+                      point: _location!,
+                      width: 44,
+                      height: 44,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: c.surface,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: c.primary, width: 2),
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black26, blurRadius: 6),
+                          ],
+                        ),
+                        child: Transform.rotate(
+                          angle: _heading * math.pi / 180,
+                          child: Icon(
+                            Ic.navigate,
+                            color: c.primary,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              // Map attribution remains available above the docked destination card.
+              Padding(
+                padding: EdgeInsets.only(bottom: widget.attributionBottomOffset),
+                child: const SafeArea(
+                  top: false,
+                  child: RichAttributionWidget(
+                    attributions: [
+                      TextSourceAttribution('OpenStreetMap contributors'),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: RouteOverlay(
+            visible: _uiVisible,
+            child: SafeArea(
+              bottom: false,
+              minimum: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (widget.header != null) ...[
+                    widget.header!,
+                    const SizedBox(height: 10),
+                  ],
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _MapPill(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                color: _paused
+                                    ? c.warn
+                                    : _location == null
+                                    ? c.muted
+                                    : c.success,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _paused
+                                    ? 'Camera paused'
+                                    : _location == null
+                                    ? 'Waiting for location'
+                                    : 'Following location',
+                                style: T.smallBoldFor(c).copyWith(color: c.ink),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (widget.route.length >= 2)
+                        _MapPill(
+                          onTap: _fitRoute,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Ic.fitRoute, size: 14, color: c.actionInk),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  'Fit route',
+                                  style: T.smallBoldFor(c).copyWith(
+                                    color: c.actionInk,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (_paused)
+                        FilledButton.icon(
+                          onPressed: () {
+                            setState(() => _paused = false);
+                            _follow();
+                          },
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(48, 38),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            shape: const StadiumBorder(),
+                          ),
+                          icon: const Icon(Ic.locateFixed, size: 16),
+                          label: const Text('Recenter'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _MapPill(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      child: Text(
+                        'Tap map to hide controls',
+                        style: T.smallFor(c).copyWith(fontSize: 12),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
-      Positioned(
-        top: 0,
-        left: 0,
-        right: 0,
-        child: RouteOverlay(
-          visible: _uiVisible,
-          child: SafeArea(
-            bottom: false,
-            minimum: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (widget.header != null) ...[
-                  widget.header!,
-                  const SizedBox(height: 10),
-                ],
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Material(
-                      color: P.surface,
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        child: Text(
-                          _paused
-                              ? 'Camera paused'
-                              : _location == null
-                              ? 'Waiting for location'
-                              : 'Following location',
-                          style: T.small,
-                        ),
-                      ),
-                    ),
-                    if (_paused)
-                      FilledButton.icon(
-                        onPressed: () {
-                          setState(() => _paused = false);
-                          _follow();
-                        },
-                        icon: const Icon(Icons.my_location, size: 18),
-                        label: const Text('Recenter'),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Material(
-                    color: P.surface,
-                    borderRadius: BorderRadius.circular(4),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      child: Text('Tap map to hide controls', style: T.small),
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
+}
+
+class _MapPill extends StatelessWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final EdgeInsetsGeometry padding;
+
+  const _MapPill({
+    required this.child,
+    this.onTap,
+    this.padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
+    return Material(
+      color: c.surface,
+      elevation: 2,
+      shadowColor: Colors.black26,
+      shape: StadiumBorder(side: BorderSide(color: c.line)),
+      clipBehavior: Clip.antiAlias,
+      child: onTap == null
+          ? Padding(padding: padding, child: child)
+          : InkWell(
+              onTap: onTap,
+              child: Padding(padding: padding, child: child),
+            ),
+    );
+  }
 }

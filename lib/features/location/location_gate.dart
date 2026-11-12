@@ -74,8 +74,9 @@ class _LocationGateState extends State<LocationGate>
 
   Future<void> _recheck(BuildContext pageContext) async {
     final on = await _check();
-    if (!on && pageContext.mounted)
+    if (!on && pageContext.mounted) {
       toast(pageContext, 'Location is still off. Turn it on in settings.');
+    }
   }
 
   @override
@@ -111,87 +112,82 @@ class _LocationOffPage extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: P.surface,
-    body: SafeArea(
-      child: LayoutBuilder(
-        builder: (context, bounds) => SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: 420,
-                minHeight: (bounds.maxHeight - 48)
-                    .clamp(0.0, double.infinity)
-                    .toDouble(),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: DriverBrand(compact: true),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 28),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Ic.locationOff, size: 30, color: P.muted),
-                        const SizedBox(height: 20),
-                        Text(
-                          'Location is off',
-                          style: T.title.copyWith(fontSize: 26, height: 1.2),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          "Turn on your phone's location to share your position with dispatch and use delivery routes.",
-                          style: T.body.copyWith(color: P.muted, height: 1.5),
-                        ),
-                      ],
+  Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
+    return Scaffold(
+      backgroundColor: c.bg,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, bounds) => SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 420,
+                  minHeight: (bounds.maxHeight - 40)
+                      .clamp(0.0, double.infinity)
+                      .toDouble(),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Panel(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: DriverBrand(compact: true),
+                          ),
+                          const SizedBox(height: 24),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: IconTile(
+                              Ic.locationOff,
+                              bg: c.warnSoft,
+                              fg: c.warn,
+                              size: 52,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Semantics(
+                            header: true,
+                            child: Text(
+                              'Location is off',
+                              style: T.displayFor(c),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            "Turn on your phone's location to share your live position with dispatch and preview delivery routes.",
+                            style: T.bodyFor(c).copyWith(color: c.muted),
+                          ),
+                          const SizedBox(height: 24),
+                          BigButton(
+                            'Open location settings',
+                            onTap: onOpenSettings,
+                          ),
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: checking
+                                ? null
+                                : () => onRecheck(context),
+                            child: Text(
+                              checking ? 'Checking...' : 'Check again',
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      FilledButton(
-                        onPressed: onOpenSettings,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: P.primary,
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size.fromHeight(52),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          textStyle: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        child: const Text('Open location settings'),
-                      ),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: checking ? null : () => onRecheck(context),
-                        style: TextButton.styleFrom(
-                          foregroundColor: P.muted,
-                          minimumSize: const Size.fromHeight(48),
-                          textStyle: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        child: Text(checking ? 'Checking...' : 'Check again'),
-                      ),
-                    ],
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }

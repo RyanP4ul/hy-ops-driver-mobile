@@ -1,7 +1,6 @@
 import '../services/assignment_socket.dart';
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' show PlatformDispatcher, Brightness;
 
@@ -15,6 +14,7 @@ import '../data/models.dart';
 import '../repositories/driver_repository.dart';
 import '../services/location_tracking_service.dart';
 import '../services/offline_policy.dart';
+import '../services/sync_scheduler.dart';
 
 enum AppThemeMode { system, light, dark }
 
@@ -22,6 +22,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final SharedPreferences _prefs;
   final ApiClient client;
   final bool realtime;
+  final bool _ownsRepository;
   late final AssignmentSocket assignments;
   bool restorePending = false, _refreshQueued = false, _restoring = false;
   String? historyFrom, historyTo, historyStatus;
@@ -32,6 +33,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   bool pastTrips = false;
   String? rememberedUser, error;
   String? assignmentNotice;
+  String? assignmentTripId;
   DateTime? lastSynced;
   Driver driver = Driver('', '', '', '', '');
   List<Trip> trips = [];
@@ -44,9 +46,136 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Duration _automaticRefreshInterval =
       DriverRepository.defaultAutomaticRefreshInterval;
   Duration get automaticRefreshInterval => _automaticRefreshInterval;
-  bool _disposed = false, _offlineView = false;
+  bool _disposed = false,
+      _offlineView = false,
+      _startupValidating = false,
+      _manualSyncing = false;
   bool get isOffline => _offlineView || repository.offline;
-  bool get canPerformActions => loggedIn && !isOffline && !loading && !busy;
+  bool get isStartupValidating => _startupValidating;
+  bool get isSyncing => loggedIn && (repository.sync.syncing || _manualSyncing);
+  bool get canPerformActions =>
+      loggedIn && !isOffline && !loading && !busy && !_startupValidating;
+  bool get canSaveActions =>
+      loggedIn &&
+      !busy &&
+      !_startupValidating &&
+      ((repository.syncSupported &&
+              repository.offlineWritesEnabled &&
+              (!isOffline || client.remember)) ||
+          (!isOffline && !loading));
+  int get pendingSyncCount => loggedIn ? repository.sync.pendingCount : 0;
+  String? get offlineActionRestriction {
+    if (!repository.syncSupported)
+      return 'Offline delivery recording is not available from this server. Connect and ask your administrator to finish synchronization setup. Saved details and downloaded photos remain available.';
+    if (!repository.offlineWritesEnabled)
+      return 'Offline delivery recording is not enabled on the server. Saved details and downloaded photos remain available.';
+    if (!client.remember)
+      return 'Offline recording requires Remember me. Connect and sign in with Remember me enabled. Saved details and downloaded photos remain available.';
+    return null;
+  }
+
+  void requireSavedAction() {
+    if (!loggedIn) throw StateError('Sign in to continue.');
+    if (!repository.syncSupported || !repository.offlineWritesEnabled)
+      requireOnlineAction();
+  }
+
+  StreamSubscription<void>? _localChanges;
+  Timer? _savedDebounce;
+  int _scheduledPending = 0;
+  void _syncChanged() {
+    if (loggedIn && !repository.sync.syncing && !repository.offline) {
+      _offlineView = false;
+      if (realtime) {
+        tracking.start();
+        assignments.start();
+      }
+    }
+    final pending = pendingSyncCount;
+    if (pending > _scheduledPending)
+      unawaited(SyncScheduler.schedule(client).catchError((Object _) {}));
+    _scheduledPending = pending;
+    _notify();
+  }
+
+  void _tripUnavailable(String id) {
+    if (_disposed || !loggedIn) return;
+    trips.removeWhere((trip) => trip.id == id);
+    currentTrips.removeWhere((trip) => trip.id == id);
+    _details.remove(id);
+    _notify();
+  }
+
+  Future<void> _prepareSync() async {
+    try {
+      await repository.restoreSync();
+      await repository.checkSyncCapability();
+      if (repository.syncSupported)
+        await SyncScheduler.schedule(client, periodic: true);
+    } catch (_) {
+      /* Unsupported servers retain read-only offline fallback. */
+    }
+  }
+
+  Future<void> _showSaved({bool startup = false}) async {
+    final generation = _generation;
+    try {
+      await repository.saved(() async {
+        final profile = await repository.profile();
+        final savedTrips = await repository.trips(
+          page: tripPage,
+          past: pastTrips,
+        );
+        final current = !pastTrips && tripPage == 0
+            ? savedTrips
+            : await repository.trips();
+        final details = <String, Trip>{};
+        for (final id in _details.keys.toList()) {
+          try {
+            details[id] = await repository.trip(id);
+          } on OfflineCacheMiss {
+            /* Not downloaded. */
+          }
+        }
+        if (_disposed || generation != _generation) return;
+        driver = profile;
+        trips = savedTrips.items;
+        tripTotal = savedTrips.total;
+        currentTrips = current.items;
+        _details.addAll(details);
+        final scope = client.cacheScope;
+        if (scope != null) {
+          final pull = await repository.outbox.metadata(scope, 'last_pull');
+          if (_disposed ||
+              generation != _generation ||
+              scope != client.cacheScope)
+            return;
+          lastSynced = DateTime.tryParse(pull ?? '') ?? lastSynced;
+        }
+        try {
+          final savedHistory = await repository.history(
+            page: historyPage,
+            from: historyFrom,
+            to: historyTo,
+            status: historyStatus,
+          );
+          if (_disposed || generation != _generation) return;
+          history = savedHistory.items;
+          historyTotal = savedHistory.total;
+        } on OfflineCacheMiss {
+          /* A missing filtered page is loaded separately. */
+        }
+        if (startup && !_disposed && generation == _generation) {
+          loggedIn = true;
+          initialized = true;
+        }
+        _notify();
+      });
+    } catch (_) {
+      /* A cache miss leaves the existing view intact. */
+    }
+  }
+
   void requireOnlineAction() {
     if (!loggedIn) throw StateError('Sign in to continue.');
     if (isOffline) throw OfflineActionBlocked();
@@ -70,14 +199,26 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     ApiClient? api,
     DriverRepository? driverRepository,
     this.realtime = true,
-  }) : client = api ?? ApiClient() {
+  }) : client = api ?? ApiClient(),
+       _ownsRepository = driverRepository == null {
     repository = driverRepository ?? DriverRepository(client);
+    repository.onTripUnavailable = _tripUnavailable;
+    repository.sync.addListener(_syncChanged);
+    _localChanges = repository.changes.listen((_) {
+      if (!loggedIn || !repository.syncSupported) return;
+      _savedDebounce?.cancel();
+      _savedDebounce = Timer(
+        const Duration(milliseconds: 50),
+        () => unawaited(_showSaved()),
+      );
+    });
     assignments = AssignmentSocket(
       cookieProvider: client.socketCookie,
       changed: _assignmentChanged,
       onAssignment: (event) {
         if (loggedIn && notifications) {
           assignmentNotice = event.notice;
+          assignmentTripId = '${event.deliveryId}';
           _notify();
         }
       },
@@ -93,6 +234,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       (m) => m.name == saved,
       orElse: () => AppThemeMode.system,
     );
+    notifications = _prefs.getBool('notifications') ?? true;
+    keepScreenOn = _prefs.getBool('keep_screen_on') ?? true;
     rememberedUser = _prefs.getString('username');
     _applyBrightness();
     WidgetsBinding.instance.addObserver(this);
@@ -102,21 +245,28 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     if (_restoring) return;
     _restoring = true;
     initialized = false;
+    _startupValidating = false;
     _notify();
     repository.beginReadCycle();
     try {
       await client.restore();
       if (client.remember) {
+        _startupValidating = true;
+        await repository.restoreSync();
+        await _showSaved(startup: true);
         await client.validate();
         driver = await repository.profile();
         loggedIn = true;
+        await _prepareSync();
         await _loadAutomaticRefreshInterval();
         if (_disposed || !loggedIn) return;
+        _startupValidating = false;
         if (realtime && !isOffline) tracking.start();
         await refresh(retryConnection: false);
         _startPolling();
       }
     } catch (e) {
+      _startupValidating = false;
       if (isConnectionFailure(e) &&
           client.remember &&
           client.cacheScope != null) {
@@ -137,6 +287,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         error = apiError(e);
       }
     }
+    _startupValidating = false;
     _restoring = false;
     restorePending = !loggedIn && client.remember;
     initialized = true;
@@ -154,6 +305,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       await client.validate();
       driver = await repository.profile();
       loggedIn = true;
+      await _prepareSync();
       _offlineView = repository.offline;
       await _loadAutomaticRefreshInterval();
       if (_disposed || !loggedIn) return;
@@ -177,13 +329,29 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _notify();
   }
 
-  Future<void> logout() async {
+  Future<void> logout({bool discardPending = false}) async {
     if (!initialized) return;
+    if (pendingSyncCount > 0 && !discardPending)
+      throw StateError(
+        'Sync saved work first, or choose discard and sign out.',
+      );
+    // Invalidate in-flight requests before deleting queue rows or private files.
+    var cleanupFailed = false;
+    if (discardPending) {
+      client.cancelPendingRequests();
+      try {
+        await client.onSessionQuarantined?.call(client.cacheScope ?? '');
+        await repository.discardPending();
+      } catch (_) {
+        cleanupFailed = true;
+      }
+    }
     initialized = false;
     _sessionLost(clearCredential: false);
     try {
       final revoked = await client.logout();
       error = revoked ? null : 'Signed out on this device. Server session revocation could not be confirmed.';
+      if (cleanupFailed) error = 'Signed out. Some saved work could not be removed and remains isolated to your account.';
     } finally {
       initialized = true;
       _notify();
@@ -193,11 +361,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   void _sessionLost({bool clearCredential = true}) {
     _generation++;
     loggedIn = false;
-    loading = busy = false;
+    unawaited(SyncScheduler.cancel().catchError((Object _) {}));
     _poll?.cancel();
     assignments.stop();
+    loading = busy = _manualSyncing = false;
     restorePending = false;
     assignmentNotice = null;
+    assignmentTripId = null;
     tracking.stop();
     trips = [];
     currentTrips = [];
@@ -213,6 +383,29 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> refresh({bool retryConnection = true}) async {
+    await repository.network(() => _refresh(retryConnection: retryConnection));
+  }
+
+  /// Synchronize any queued offline work and refresh assignments, blocking UI
+  /// interaction via [isSyncing] until complete.
+  Future<void> synchronize() async {
+    if (!loggedIn || loading || busy || _manualSyncing) return;
+    _manualSyncing = true;
+    _notify();
+    try {
+      if (repository.syncSupported) {
+        await repository.sync.request(force: true);
+      }
+      await refresh();
+    } finally {
+      if (!_disposed) {
+        _manualSyncing = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<void> _refresh({bool retryConnection = true}) async {
     if (!loggedIn) return;
     if (loading || busy) {
       _refreshQueued = true;
@@ -223,6 +416,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _notify();
     repository.beginReadCycle();
     try {
+      if (repository.syncSupported) await _showSaved();
       if (isOffline && retryConnection) {
         try {
           await client.validate();
@@ -232,6 +426,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
       final profile = await repository.profile();
+      if (!client.networkUnavailable.value) {
+        try {
+          await repository.checkSyncCapability();
+        } catch (_) {
+          /* Keep the last known server policy until it can be checked. */
+        }
+      }
       final assignments = await repository.trips(
         page: tripPage,
         past: pastTrips,
@@ -260,7 +461,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       driver = profile;
       currentTrips = current.items;
       trips = assignments.items;
-      _applyAllStopPlans();
       tripTotal = assignments.total;
       history = outcomes.items;
       historyTotal = outcomes.total;
@@ -274,6 +474,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       }
       error = null;
       lastSynced = repository.usedCache ? repository.cachedAt : DateTime.now();
+      if (repository.syncSupported && !isOffline && client.cacheScope != null) {
+        await repository.outbox.setMetadata(
+          client.cacheScope!,
+          'last_pull',
+          lastSynced!.toUtc().toIso8601String(),
+        );
+      }
+      if (repository.syncSupported && !isOffline)
+        unawaited(repository.sync.request());
     } catch (e) {
       if (generation == _generation) {
         error = apiError(e);
@@ -296,7 +505,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final trip = await repository.trip(id);
       if (_disposed || generation != _generation || !loggedIn) return;
-      _applyStopPlan(trip);
       if (repository.offline) {
         _offlineView = true;
         if (repository.cachedAt != null) lastSynced = repository.cachedAt;
@@ -326,78 +534,52 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  String _stopPlanKey(String tripId) => 'driver_stop_plan:${driver.id}:$tripId';
+  Future<void> _stopPlanQueue = Future.value();
 
-  void _applyStopPlan(Trip trip) {
-    trip.preferredStopId = null;
-    trip.deferredStopIds.clear();
-    final saved = _prefs.getString(_stopPlanKey(trip.id));
-    if (saved == null || trip.status != TripStatus.inProgress) return;
-    try {
-      final plan = jsonDecode(saved) as Map<String, dynamic>;
-      final pending = trip.stops
-          .where((stop) => stop.isGroupedOrder && !stop.isDone)
-          .map((stop) => stop.id)
-          .toSet();
-      trip.deferredStopIds.addAll(
-        (plan['skipped'] as List).whereType<String>().where(pending.contains),
-      );
-      final next = plan['next'] as String?;
-      if (pending.contains(next) && !trip.deferredStopIds.contains(next)) {
-        trip.preferredStopId = next;
-      }
-    } catch (_) {
-      // Ignore damaged local preferences; the assignment remains usable.
-      trip.preferredStopId = null;
-      trip.deferredStopIds.clear();
-    }
-  }
-
-  void _applyAllStopPlans() {
-    for (final trip in {...trips, ...currentTrips, ..._details.values}) {
-      _applyStopPlan(trip);
-    }
-  }
-
-  /// Defers or prioritizes one order without sending a delivery outcome.
+  /// Save a planning choice on the server without recording a delivery outcome.
   Future<void> planGroupedOrder(
     String tripId,
     String stopId, {
     bool skip = false,
-  }) async {
-    if (!loggedIn || busy || loading) {
-      throw StateError('Wait for the current operation.');
-    }
-    final trip = tripById(tripId);
-    final stop = trip.stops.where((stop) => stop.id == stopId).firstOrNull;
-    if (trip.status != TripStatus.inProgress ||
-        stop == null ||
-        !stop.isGroupedOrder ||
-        stop.isDone ||
-        !(stop.canDeliver || stop.canFail)) {
-      throw StateError('This order is no longer available. Refresh the trip.');
-    }
-    _applyStopPlan(trip);
-    final skipped = {...trip.deferredStopIds};
-    var next = trip.preferredStopId;
-    if (skip) {
-      skipped.add(stopId);
-      if (next == stopId) next = null;
-    } else {
-      skipped.remove(stopId);
-      next = stopId;
-    }
+  }) {
+    requireOnlineAction();
     final generation = _generation;
-    final saved = await _prefs.setString(
-      _stopPlanKey(tripId),
-      jsonEncode({'next': next, 'skipped': skipped.toList()}),
+    final operation = _stopPlanQueue.then((_) async {
+      if (_disposed || generation != _generation) return;
+      requireOnlineAction();
+      if (busy || loading) throw StateError('Wait for the current operation.');
+      final trip = tripById(tripId);
+      final stop = trip.stops.where((stop) => stop.id == stopId).firstOrNull;
+      if (trip.status != TripStatus.inProgress ||
+          stop == null ||
+          !stop.isGroupedOrder ||
+          stop.isDone ||
+          !(stop.canDeliver || stop.canFail)) {
+        throw StateError(
+          'This order is no longer available. Refresh the trip.',
+        );
+      }
+      busy = true;
+      _notify();
+      try {
+        await repository.planStop(stopId, skip: skip);
+      } catch (e) {
+        if (generation == _generation) error = apiError(e);
+        rethrow;
+      } finally {
+        if (!_disposed && generation == _generation) {
+          busy = false;
+          await refresh(retryConnection: false);
+          _notify();
+        }
+      }
+    });
+    // Keep later commands usable after a failed request.
+    _stopPlanQueue = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
     );
-    if (!saved) {
-      throw StateError('Could not save your order preference. Try again.');
-    }
-    if (_disposed || generation != _generation) return;
-    _applyAllStopPlans();
-    _notify();
+    return operation;
   }
 
   Future<void> startTrip(Trip trip) async {
@@ -424,7 +606,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> collectReturn(ReturnPickup pickup) async {
-    requireOnlineAction();
+    requireSavedAction();
     if (busy) throw StateError('An operation is already pending.');
     busy = true;
     _notify();
@@ -440,14 +622,17 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     } finally {
       if (!_disposed && generation == _generation) {
         busy = false;
-        await refresh(retryConnection: false);
+        if (repository.syncSupported)
+          await _showSaved();
+        else
+          await refresh(retryConnection: false);
         _notify();
       }
     }
   }
 
   Future<void> recordOutcome(Trip trip, Stop stop, {String? reason}) async {
-    requireOnlineAction();
+    requireSavedAction();
     if (busy) throw StateError('An operation is already pending.');
     busy = true;
     _notify();
@@ -457,7 +642,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     // Retain the same key after an ambiguous timeout, so retry can be reconciled safely.
     final key = _operationKeys.putIfAbsent(identity, newOperationKey);
     try {
-      if (reason == null) {
+      if (reason == null &&
+          !(repository.syncSupported && repository.offlineWritesEnabled)) {
         final proofs = await repository.proofs(stop.id);
         if (proofs.isEmpty) {
           throw StateError(
@@ -475,7 +661,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     } finally {
       if (!_disposed && generation == _generation) {
         busy = false;
-        await refresh(retryConnection: false);
+        if (repository.syncSupported)
+          await _showSaved();
+        else
+          await refresh(retryConnection: false);
         _notify();
       }
     }
@@ -586,6 +775,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   void dismissAssignmentNotice() {
     assignmentNotice = null;
+    assignmentTripId = null;
     _notify();
   }
 
@@ -605,6 +795,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool get isDark => P.dark;
+
   void _applyBrightness() {
     P.dark =
         themeMode == AppThemeMode.dark ||
@@ -626,11 +817,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   void toggleNotifications(bool v) {
     notifications = v;
+    _prefs.setBool('notifications', v);
     _notify();
   }
 
   void toggleScreenOn(bool v) {
     keepScreenOn = v;
+    _prefs.setBool('keep_screen_on', v);
     _notify();
   }
 
@@ -643,6 +836,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _disposed = true;
     _generation++;
     _poll?.cancel();
+    _savedDebounce?.cancel();
+    unawaited(_localChanges?.cancel());
+    repository.sync.removeListener(_syncChanged);
+    if (repository.onTripUnavailable == _tripUnavailable)
+      repository.onTripUnavailable = null;
+    if (_ownsRepository) repository.sync.dispose();
     assignments.stop();
     client.onSessionLost = null;
     client.networkUnavailable.removeListener(_networkChanged);

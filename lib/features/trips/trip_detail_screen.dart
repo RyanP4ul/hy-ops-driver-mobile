@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../api/api_client.dart';
 import '../../core/format.dart';
+import '../../core/icons.dart';
 import '../../core/palette.dart';
 import '../../data/models.dart';
 import '../../state/app_state.dart';
@@ -13,9 +14,9 @@ import '../../widgets/sync_panel.dart';
 import '../../widgets/workspace.dart';
 import '../navigation/navigation_screen.dart';
 import 'delivery_sheets.dart';
-import 'proof_sheet.dart';
-import 'order_items_screen.dart';
 import 'delivery_stop_groups.dart';
+import 'order_items_screen.dart';
+import 'proof_sheet.dart';
 
 class TripDetailScreen extends StatefulWidget {
   final String tripId;
@@ -26,6 +27,7 @@ class TripDetailScreen extends StatefulWidget {
 
 class _TripDetailScreenState extends State<TripDetailScreen> {
   bool _started = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -48,10 +50,24 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final s = AppScope.of(context), trip = s.findTrip(widget.tripId);
+    final s = AppScope.of(context);
+    final c = HyOpsColors.of(context);
+    final trip = s.findTrip(widget.tripId);
     final stopGroups = deliveryStopGroups(trip?.stops ?? []);
+    final pendingCollect = (trip?.stops ?? [])
+        .where((st) => !st.isDone && st.collectNow.isFinite && st.collectNow > 0)
+        .fold<double>(0, (sum, st) => sum + st.collectNow);
+
     return Scaffold(
-      appBar: AppBar(title: Text('Delivery ${widget.tripId}')),
+      appBar: AppBar(
+        title: Text('Delivery ${widget.tripId}'),
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 6),
+            child: SyncStatusHeader(iconOnly: true),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: _reload,
         child: WorkspaceList(
@@ -59,7 +75,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
             const SyncPanel(),
             if (trip == null)
               DriverEmptyState(
-                icon: Icons.route_outlined,
+                icon: Ic.route,
                 title: 'Assignment unavailable',
                 message: 'Refresh the assignment or return to Trips.',
                 action: OutlinedButton(
@@ -68,25 +84,56 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                 ),
               ),
             if (trip != null) ...[
+              const SizedBox(height: 4),
               WorkspaceColumns(
                 first: Panel(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      StatusPill.trip(trip.status),
-                      const SizedBox(height: 12),
-                      Text(trip.truck, style: T.title),
-                      const SizedBox(height: 4),
-                      Text(trip.warehouse, style: T.body),
-                      const SizedBox(height: 8),
-                      Text(
-                        '${manilaSchedule(trip.scheduledAt)} (Manila)',
-                        style: T.small,
+                      SizedBox(
+                        width: double.infinity,
+                        child: Wrap(
+                          spacing: 10,
+                          runSpacing: 6,
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            StatusPill.trip(trip.status),
+                            Text(
+                              '${manilaSchedule(trip.scheduledAt)} (Manila)',
+                              style: T.smallFor(c),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 16),
-                      Text(
-                        '${trip.doneCount} of ${trip.stops.length} orders recorded${trip.pickups.isEmpty ? '' : ' / ${trip.pickups.length} return pickups'}',
-                        style: T.bodyBold,
+                      const SizedBox(height: 12),
+                      Text(formatVehicle(trip.truck), style: T.titleFor(c)),
+                      const SizedBox(height: 4),
+                      Text(trip.warehouse, style: T.bodyFor(c)),
+                      if (trip.stops.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        SegmentedProgress(trip),
+                      ],
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 4,
+                        children: [
+                          Text(
+                            '${trip.doneCount} of ${trip.stops.length} ${pluralize(trip.stops.length, 'order')} recorded',
+                            style: T.bodyBoldFor(c),
+                          ),
+                          if (pendingCollect > 0)
+                            Text(
+                              'Collect remaining: ${formatPhp(pendingCollect)}',
+                              style: T.smallBoldFor(c).copyWith(color: c.warn),
+                            ),
+                          if (trip.pickups.isNotEmpty)
+                            Text(
+                              '${trip.pickups.length} return ${pluralize(trip.pickups.length, 'pickup')}',
+                              style: T.smallFor(c),
+                            ),
+                        ],
                       ),
                       if (trip.status == TripStatus.loading) ...[
                         const SizedBox(height: 12),
@@ -94,12 +141,13 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                           trip.canStartAt(DateTime.now())
                               ? 'Your trip is ready to start.'
                               : 'Start on the scheduled Manila date, at or after departure time.',
-                          style: T.small,
+                          style: T.smallFor(c),
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 14),
                         BigButton(
                           s.busy ? 'Starting trip...' : 'Start trip',
-                          icon: Icons.play_arrow_rounded,
+                          icon: Ic.play,
+                          busy: s.busy,
                           onTap:
                               s.canPerformActions &&
                                   trip.canStartAt(DateTime.now())
@@ -107,8 +155,9 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                                   try {
                                     await s.startTrip(trip);
                                   } catch (e) {
-                                    if (context.mounted)
+                                    if (context.mounted) {
                                       toast(context, apiError(e));
+                                    }
                                   }
                                 }
                               : null,
@@ -118,9 +167,9 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                         const SizedBox(height: 12),
                         Text(
                           'Return with all collected returns and undelivered goods. Staff will confirm warehouse receipt.',
-                          style: T.body,
+                          style: T.bodyFor(c),
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 14),
                         OutlinedButton.icon(
                           onPressed:
                               !s.isOffline && trip.hasWarehouseCoordinates
@@ -131,7 +180,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                                   ),
                                 )
                               : null,
-                          icon: const Icon(Icons.navigation_outlined),
+                          icon: const Icon(Ic.navigate, size: 16),
                           label: const Text('Route to warehouse'),
                         ),
                       ],
@@ -142,133 +191,135 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (trip.pickups.isNotEmpty) ...[
-                      Text('Refunded / return pickups', style: T.title),
-                      const SizedBox(height: 8),
+                      Text('Refunded / return pickups', style: T.titleFor(c)),
+                      const SizedBox(height: 6),
                       Text(
                         'Retrieve the goods only. Do not collect or refund money.',
-                        style: T.small,
+                        style: T.smallFor(c),
                       ),
-                      for (final pickup in trip.pickups)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Panel(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(pickup.orderNumber, style: T.bodyBold),
-                                Text(pickup.customer, style: T.body),
-                                Text(pickup.address, style: T.body),
-                                if (pickup.phone.isNotEmpty)
-                                  SelectableText(pickup.phone),
+                      const SizedBox(height: 10),
+                      for (final pickup in trip.pickups) ...[
+                        Panel(
+                          accentColor: pickup.status == 'assigned'
+                              ? c.warn
+                              : c.success,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      pickup.orderNumber,
+                                      style: T.bodyBoldFor(c),
+                                    ),
+                                  ),
+                                  StatusPill(
+                                    switch (pickup.status) {
+                                      'received' => 'Received',
+                                      'assigned' => 'Pending pickup',
+                                      _ => 'Collected',
+                                    },
+                                    tone: pickup.status == 'assigned'
+                                        ? Tone.warn
+                                        : Tone.green,
+                                  ),
+                                ],
+                              ),
+                              if (pickup.pendingSync != null) ...[
+                                const SizedBox(height: 6),
+                                FeedbackStrip(
+                                  pickup.syncError ??
+                                      'Pending collection - saved on device',
+                                  warning: true,
+                                ),
+                              ],
+                              const SizedBox(height: 6),
+                              Text(pickup.customer, style: T.bodyBoldFor(c)),
+                              Text(pickup.address, style: T.bodyFor(c)),
+                              if (pickup.phone.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                CallCopyPhoneRow(
+                                  phone: pickup.phone,
+                                  compact: true,
+                                ),
+                              ],
+                              if (pickup.reason.isNotEmpty) ...[
+                                const SizedBox(height: 8),
                                 Text(
                                   'Reason: ${pickup.reason}',
-                                  style: T.small,
+                                  style: T.smallFor(c),
                                 ),
+                              ],
+                              if (pickup.items.isNotEmpty) ...[
+                                const SizedBox(height: 6),
                                 for (final item in pickup.items)
                                   Text(
-                                    '${item.qty} x ${item.name}',
-                                    style: T.small,
+                                    '${item.qty} × ${item.name}',
+                                    style: T.smallFor(c),
                                   ),
-                                const SizedBox(height: 12),
-                                if (pickup.status == 'assigned' &&
-                                    trip.status == TripStatus.inProgress) ...[
-                                  OutlinedButton.icon(
-                                    onPressed:
-                                        s.canPerformActions &&
-                                            pickup.hasCoordinates
-                                        ? () => Navigator.of(context).push(
-                                            MaterialPageRoute<void>(
-                                              builder: (_) => NavigationScreen(
-                                                tripId: trip.id,
-                                                pickupId: pickup.id,
-                                              ),
-                                            ),
-                                          )
-                                        : null,
-                                    icon: const Icon(Icons.navigation_outlined),
-                                    label: const Text('Route to pickup'),
-                                  ),
-                                  if (!pickup.hasCoordinates)
-                                    Text(
-                                      'Coordinates unavailable. Confirm the address with staff.',
-                                      style: T.small,
-                                    ),
-                                  BigButton(
-                                    'Confirm collection',
-                                    icon: Icons.inventory_2_outlined,
-                                    onTap: !s.canPerformActions
-                                        ? null
-                                        : () async {
-                                            final confirmed = await showDialog<bool>(
-                                              context: context,
-                                              builder: (dialogContext) =>
-                                                  AlertDialog(
-                                                    title: const Text(
-                                                      'Confirm goods collected',
-                                                    ),
-                                                    content: Text(
-                                                      'Have you physically collected ALL goods for ${pickup.orderNumber}? Return them to the warehouse. This does not issue a financial refund.',
-                                                    ),
-                                                    actions: [
-                                                      TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.pop(
-                                                              dialogContext,
-                                                              false,
-                                                            ),
-                                                        child: const Text(
-                                                          'Cancel',
-                                                        ),
-                                                      ),
-                                                      FilledButton(
-                                                        onPressed: () =>
-                                                            Navigator.pop(
-                                                              dialogContext,
-                                                              true,
-                                                            ),
-                                                        child: const Text(
-                                                          'Confirm collection',
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                            );
-                                            if (confirmed != true ||
-                                                !context.mounted)
-                                              return;
-                                            try {
-                                              await s.collectReturn(pickup);
-                                              if (context.mounted)
-                                                toast(
-                                                  context,
-                                                  'Collection confirmed. Return the goods to the warehouse.',
-                                                );
-                                            } catch (e) {
-                                              if (context.mounted)
-                                                toast(context, apiError(e));
-                                            }
-                                          },
-                                  ),
-                                ] else
-                                  Text(switch (pickup.status) {
-                                    'received' => 'Received at warehouse',
-                                    'assigned' => 'Awaiting pickup',
-                                    _ =>
-                                      'Collected / awaiting warehouse receipt',
-                                  }, style: T.bodyBold),
                               ],
-                            ),
+                              const SizedBox(height: 12),
+                              if (pickup.status == 'assigned' &&
+                                  trip.status == TripStatus.inProgress) ...[
+                                OutlinedButton.icon(
+                                  onPressed:
+                                      s.canPerformActions &&
+                                          pickup.hasCoordinates
+                                      ? () => Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (_) => NavigationScreen(
+                                              tripId: trip.id,
+                                              pickupId: pickup.id,
+                                            ),
+                                          ),
+                                        )
+                                      : null,
+                                  icon: const Icon(Ic.navigate, size: 16),
+                                  label: const Text('Route to pickup'),
+                                ),
+                                if (!pickup.hasCoordinates) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Coordinates unavailable. Confirm the address with staff.',
+                                    style: T.smallFor(c),
+                                  ),
+                                ],
+                                const SizedBox(height: 10),
+                                BigButton(
+                                  'Confirm collection',
+                                  icon: Ic.box,
+                                  onTap:
+                                      !s.canSaveActions ||
+                                          pickup.pendingSync != null
+                                      ? null
+                                      : () => _confirmPickupCollection(
+                                          context,
+                                          s,
+                                          pickup,
+                                        ),
+                                ),
+                              ] else
+                                Text(switch (pickup.status) {
+                                  'received' => 'Received at warehouse',
+                                  'assigned' => 'Awaiting pickup',
+                                  _ =>
+                                    'Collected / awaiting warehouse receipt',
+                                }, style: T.bodyBoldFor(c)),
+                            ],
                           ),
                         ),
-                      const SizedBox(height: 16),
+                        const SizedBox(height: 12),
+                      ],
+                      const SizedBox(height: 8),
                     ],
-                    Text('Delivery stops', style: T.title),
-                    const SizedBox(height: 8),
+                    Text('Delivery stops', style: T.titleFor(c)),
+                    const SizedBox(height: 4),
                     Text(
-                      'Open a stop for directions, delivery details and proof.',
-                      style: T.small,
+                      'Open a stop for route, order items, proof, and delivery confirmation.',
+                      style: T.smallFor(c),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     for (var i = 0; i < stopGroups.length; i++)
                       Padding(
                         key: ValueKey(
@@ -300,6 +351,46 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
       ),
     );
   }
+
+  Future<void> _confirmPickupCollection(
+    BuildContext context,
+    AppState s,
+    ReturnPickup pickup,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm goods collected'),
+        content: Text(
+          'Have you physically collected ALL goods for ${pickup.orderNumber}? Return them to the warehouse. This does not issue a financial refund.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Confirm collection'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await s.collectReturn(pickup);
+      if (context.mounted) {
+        toast(
+          context,
+          s.repository.syncSupported
+              ? 'Collection saved on device. Pending sync. Return the goods to the warehouse.'
+              : 'Collection confirmed. Return the goods to the warehouse.',
+        );
+      }
+    } catch (e) {
+      if (context.mounted) toast(context, apiError(e));
+    }
+  }
 }
 
 class _GroupedStopCard extends StatelessWidget {
@@ -316,67 +407,125 @@ class _GroupedStopCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppScope.of(context);
+    final c = HyOpsColors.of(context);
     final first = stops.first;
     final recorded = stops.where((stop) => stop.isDone).length;
     final skipped = stops
         .where((stop) => !stop.isDone && trip.deferredStopIds.contains(stop.id))
         .length;
     final isNext = stops.any((stop) => stop.id == trip.currentStop?.id);
+    final totalUnits = stops.fold<int>(0, (sum, st) => sum + st.itemCount);
+    final activeStop =
+        stops.where((st) => st.id == trip.currentStop?.id).firstOrNull ??
+        stops.where((st) => !st.isDone).firstOrNull ??
+        first;
+
     return Material(
-      color: P.surface,
+      color: c.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: isNext ? P.primary : P.line),
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isNext ? c.primary : c.line,
+          width: isNext ? 1.5 : 1,
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
         key: PageStorageKey('group:${trip.id}:${first.orderGroupId}'),
-        tilePadding: const EdgeInsets.all(16),
-        childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+        tilePadding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         shape: const Border(),
         collapsedShape: const Border(),
         title: Text(
-          '$number. ${first.orderGroupNumber.isEmpty ? first.customer : first.orderGroupNumber}',
-          style: T.bodyBold,
+          '$number. ${first.customer}',
+          style: T.subheadingFor(c),
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (first.orderGroupNumber.isNotEmpty) ...[
-                Text(first.customer, style: T.small),
-                const SizedBox(height: 6),
-              ],
+              Text(first.address, style: T.smallFor(c)),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
                 runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   const StatusPill('Grouped Order', tone: Tone.info),
                   Text(
-                    '${stops.length} ${stops.length == 1 ? 'order' : 'orders'} / $recorded recorded',
-                    style: T.smallBold,
+                    '${stops.length} ${pluralize(stops.length, 'order')} / $recorded recorded',
+                    style: T.smallBoldFor(c),
                   ),
                   if (skipped > 0)
-                    Text('$skipped skipped for now', style: T.small),
-                  if (isNext) Text('Next stop', style: T.smallBold),
+                    StatusPill('$skipped skipped', tone: Tone.warn),
+                  if (isNext)
+                    const StatusPill('Next stop', tone: Tone.info),
                 ],
               ),
+              if (first.orderGroupNumber.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Group ref: ${shortRef(first.orderGroupNumber)}',
+                  style: T.smallFor(c).copyWith(fontSize: 12),
+                ),
+              ],
             ],
           ),
         ),
         children: [
           if (trip.status == TripStatus.inProgress &&
-              stops.any((stop) => !stop.isDone))
+              stops.any((stop) => !stop.isDone)) ...[
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
               child: Text(
                 'Choose any pending order to deliver next. Skipped orders stay pending and can be resumed.',
-                style: T.small,
+                style: T.smallFor(c),
               ),
             ),
+            if (stops.length > 1)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: !s.isOffline && activeStop.hasCoordinates
+                            ? () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => NavigationScreen(
+                                    tripId: trip.id,
+                                    stopId: activeStop.id,
+                                  ),
+                                ),
+                              )
+                            : null,
+                        icon: const Icon(Ic.navigate, size: 16),
+                        label: const Text('Group route'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => OrderItemsScreen(
+                              stop: activeStop,
+                              tripStops: trip.stops,
+                            ),
+                          ),
+                        ),
+                        icon: const Icon(Ic.box, size: 16),
+                        label: Text('All items ($totalUnits)'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
           for (var i = 0; i < stops.length; i++) ...[
-            if (i > 0) const Divider(height: 1),
+            if (i > 0) const SizedBox(height: 10),
             _StopCard(
               key: ValueKey(stops[i].id),
               trip: trip,
@@ -384,6 +533,7 @@ class _GroupedStopCard extends StatelessWidget {
               number: i + 1,
               onChanged: onChanged,
               insideGroup: true,
+              groupAddress: first.address,
             ),
           ],
         ],
@@ -398,6 +548,8 @@ class _StopCard extends StatelessWidget {
   final int number;
   final Future<void> Function() onChanged;
   final bool insideGroup;
+  final String? groupAddress;
+
   const _StopCard({
     super.key,
     required this.trip,
@@ -405,237 +557,323 @@ class _StopCard extends StatelessWidget {
     required this.number,
     required this.onChanged,
     this.insideGroup = false,
+    this.groupAddress,
   });
+
   @override
   Widget build(BuildContext context) {
     final s = AppScope.of(context);
+    final c = HyOpsColors.of(context);
     final isNext = trip.currentStop?.id == stop.id && !stop.isDone;
     final skipped = !stop.isDone && trip.deferredStopIds.contains(stop.id);
-    final canPlan = s.loggedIn && !s.loading && !s.busy;
+    final canPlan = s.canPerformActions;
+    final showAddress =
+        insideGroup &&
+        (groupAddress == null || stop.address.trim() != groupAddress!.trim());
+    final hasProof = stop.hasProof || stop.hasLocalProof;
+
+    final cardBg = insideGroup
+        ? (isNext ? c.surface : c.surfaceSubtle)
+        : c.surface;
+    final cardBorder = isNext ? c.primary : c.line;
+
     return Material(
-      color: P.surface,
+      color: cardBg,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: insideGroup
-            ? BorderSide.none
-            : BorderSide(color: isNext ? P.primary : P.line),
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: cardBorder,
+          width: isNext ? 1.5 : 1,
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
-        key: PageStorageKey('${trip.id}:${stop.id}:${stop.status.name}'),
-        initiallyExpanded: isNext,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        shape: const Border(),
-        collapsedShape: const Border(),
-        title: Text(
-          insideGroup ? stop.orderLabel : '$number. ${stop.customer}',
-          style: T.bodyBold,
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              StatusPill.stop(stop.status),
-              if (stop.isGroupedOrder && !insideGroup)
-                const StatusPill('Grouped Order', tone: Tone.info),
-              if (skipped) const StatusPill('Skipped for now', tone: Tone.warn),
-              if (isNext)
-                Text(
-                  insideGroup ? 'Delivering next' : 'Next stop',
-                  style: T.smallBold,
-                ),
-            ],
+          key: PageStorageKey('${trip.id}:${stop.id}:${stop.status.name}'),
+          initiallyExpanded: isNext,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          shape: const Border(),
+          collapsedShape: const Border(),
+          title: Text(
+            insideGroup ? stop.orderLabel : '$number. ${stop.customer}',
+            style: T.bodyBoldFor(c),
           ),
-        ),
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Divider(),
-              const SizedBox(height: 8),
-              if (insideGroup &&
-                  trip.status == TripStatus.inProgress &&
-                  !stop.isDone &&
-                  (stop.canDeliver || stop.canFail)) ...[
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!insideGroup) ...[
+                  Text(stop.address, style: T.smallFor(c)),
+                  const SizedBox(height: 6),
+                ],
                 Wrap(
                   spacing: 8,
-                  runSpacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    if (!isNext)
-                      OutlinedButton.icon(
-                        onPressed: !canPlan
-                            ? null
-                            : () => _planOrder(context, s),
-                        icon: const Icon(Icons.near_me_outlined),
-                        label: Text(skipped ? 'Resume order' : 'Deliver next'),
-                      ),
-                    if (!skipped)
-                      TextButton.icon(
-                        onPressed: !canPlan
-                            ? null
-                            : () => _planOrder(context, s, skip: true),
-                        icon: const Icon(Icons.skip_next_outlined),
-                        label: const Text('Skip for now'),
+                    StatusPill.stop(stop.status),
+                    if (stop.isGroupedOrder && !insideGroup)
+                      const StatusPill('Grouped Order', tone: Tone.info),
+                    if (skipped)
+                      const StatusPill('Skipped for now', tone: Tone.warn),
+                    if (isNext)
+                      StatusPill(
+                        insideGroup ? 'Delivering next' : 'Next stop',
+                        tone: Tone.info,
                       ),
                   ],
                 ),
-                const SizedBox(height: 8),
               ],
-              if (!insideGroup) Text(stop.orderLabel, style: T.bodyBold),
-              if (!insideGroup && stop.orderGroupNumber.isNotEmpty)
-                Text('Group: ${stop.orderGroupNumber}', style: T.smallBold),
-              if (stop.combinedPaymentNumber.isNotEmpty)
-                Text(
-                  'Combined payment: ${stop.combinedPaymentNumber} / Original allocation: ${rm(stop.combinedPaymentAllocation)}',
-                  style: T.small,
-                ),
-              Text(stop.address, style: T.body),
-              const SizedBox(height: 8),
-              Text(stop.contact, style: T.bodyBold),
-              if (stop.phone.isNotEmpty)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: stop.phone));
-                      if (context.mounted)
-                        toast(context, 'Phone number copied');
-                    },
-                    icon: const Icon(Icons.copy_outlined, size: 18),
-                    label: Text(stop.phone),
+            ),
+          ),
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Divider(height: 1, color: c.line),
+                const SizedBox(height: 12),
+                if (insideGroup &&
+                    trip.status == TripStatus.inProgress &&
+                    !stop.isDone &&
+                    (stop.canDeliver || stop.canFail)) ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (!isNext)
+                        OutlinedButton.icon(
+                          onPressed: !canPlan
+                              ? null
+                              : () => _planOrder(context, s),
+                          icon: const Icon(Ic.navigate, size: 16),
+                          label: Text(skipped ? 'Resume order' : 'Deliver next'),
+                        ),
+                      if (!skipped)
+                        TextButton.icon(
+                          onPressed: !canPlan
+                              ? null
+                              : () => _planOrder(context, s, skip: true),
+                          icon: const Icon(Ic.skip, size: 16),
+                          label: const Text('Skip for now'),
+                        ),
+                    ],
                   ),
-                ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: [PaymentPill(stop.payment)],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text('Collect on delivery', style: T.bodyBold),
-                  ),
-                  const SizedBox(width: 12),
-                  Flexible(child: Text(rm(stop.collectNow), style: T.title)),
+                  const SizedBox(height: 12),
                 ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Order: ${rm(stop.total)} / Paid: ${rm(stop.paid)}',
-                style: T.small,
-              ),
-              Text('Staff records payment receipts.', style: T.small),
-              if (stop.notes.isNotEmpty) ...[
-                const SectionTitle('Delivery notes'),
-                Text(stop.notes, style: T.body),
-              ],
-              if (stop.failReason != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(
-                    stop.failReason!,
-                    style: TextStyle(color: P.danger),
+                if (!insideGroup) ...[
+                  Text(stop.orderLabel, style: T.bodyBoldFor(c)),
+                  const SizedBox(height: 4),
+                ],
+                if (stop.pendingSync != null) ...[
+                  FeedbackStrip(
+                    stop.syncError ??
+                        'Pending ${stop.pendingSync} - saved on device',
+                    warning: true,
                   ),
+                  const SizedBox(height: 10),
+                ],
+                if (!insideGroup && stop.orderGroupNumber.isNotEmpty) ...[
+                  Text(
+                    'Group: ${shortRef(stop.orderGroupNumber)}',
+                    style: T.smallBoldFor(c),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                if (showAddress) ...[
+                  Text(stop.address, style: T.bodyFor(c)),
+                  const SizedBox(height: 8),
+                ],
+                if (stop.contact.isNotEmpty &&
+                    stop.contact.trim() != stop.customer.trim()) ...[
+                  Text(
+                    'Recipient: ${stop.contact}',
+                    style: T.bodyBoldFor(c),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                if (stop.phone.isNotEmpty) ...[
+                  CallCopyPhoneRow(phone: stop.phone, compact: true),
+                  const SizedBox(height: 12),
+                ],
+                CollectionStrip(
+                  payment: stop.payment,
+                  collectNow: stop.collectNow,
+                  total: stop.total,
+                  paid: stop.paid,
+                  completed: stop.isDone,
                 ),
-              if (trip.status == TripStatus.inProgress &&
-                  (stop.canDeliver || stop.canFail)) ...[
-                const SizedBox(height: 16),
-                _StopActionGrid(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: !s.isOffline && stop.hasCoordinates
-                          ? () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => NavigationScreen(
-                                  tripId: trip.id,
-                                  stopId: stop.id,
-                                ),
-                              ),
-                            )
-                          : null,
-                      icon: const Icon(Icons.navigation_outlined),
-                      label: const Text(
-                        'View Road Routes',
-                        textAlign: TextAlign.center,
+                if (!stop.isDone) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Staff records payment receipts.',
+                    style: T.smallFor(c),
+                  ),
+                ],
+                if (stop.combinedPaymentNumber.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () async {
+                      await Clipboard.setData(
+                        ClipboardData(text: stop.combinedPaymentNumber),
+                      );
+                      if (context.mounted) {
+                        toast(context, 'Combined payment reference copied');
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Combined payment: ${shortRef(stop.combinedPaymentNumber)} · Allocated: ${formatPhp(stop.combinedPaymentAllocation)}',
+                              style: T.smallFor(c),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(Ic.copy, size: 14, color: c.muted),
+                        ],
                       ),
                     ),
-                    if (stop.canFail)
-                      OutlinedButton.icon(
-                        onPressed: !s.canPerformActions || s.error != null
+                  ),
+                ],
+                if (stop.notes.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: insideGroup ? c.surface : c.surfaceSubtle,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: c.line),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Ic.notes, size: 14, color: c.muted),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Delivery notes',
+                                style: T.smallBoldFor(c),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(stop.notes, style: T.bodyFor(c)),
+                      ],
+                    ),
+                  ),
+                ],
+                if (stop.failReason != null) ...[
+                  const SizedBox(height: 12),
+                  FeedbackStrip(stop.failReason!),
+                ],
+                // Primary Delivery CTA is ALWAYS discoverable for active orders.
+                if (trip.status == TripStatus.inProgress && stop.canDeliver) ...[
+                  const SizedBox(height: 16),
+                  BigButton(
+                    hasProof ? 'Record delivery' : 'Add proof & deliver',
+                    icon: Ic.check,
+                    onTap: !s.canSaveActions || stop.pendingSync != null
+                        ? null
+                        : () async {
+                            await showDeliverySheet(context, trip, stop);
+                            await onChanged();
+                          },
+                  ),
+                  if (!hasProof) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Photo required before confirmation.',
+                      style: T.smallFor(c),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ],
+                const SizedBox(height: 12),
+                _StopActionGrid(
+                  items: [
+                    if (trip.status == TripStatus.inProgress &&
+                        (stop.canDeliver || stop.canFail))
+                      _StopActionItem(
+                        label: 'Road route',
+                        icon: Ic.navigate,
+                        onPressed: !s.isOffline && stop.hasCoordinates
+                            ? () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => NavigationScreen(
+                                    tripId: trip.id,
+                                    stopId: stop.id,
+                                  ),
+                                ),
+                              )
+                            : null,
+                      ),
+                    _StopActionItem(
+                      label: 'Order items',
+                      icon: Ic.box,
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => OrderItemsScreen(
+                            stop: stop,
+                            tripStops: trip.stops,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (stop.isDone &&
+                        trip.status != TripStatus.loading &&
+                        trip.status != TripStatus.cancelled)
+                      _StopActionItem(
+                        label: 'Saved proofs',
+                        icon: Ic.camera,
+                        onPressed: !s.loggedIn || s.busy
+                            ? null
+                            : () async {
+                                await showProofSheet(
+                                  context,
+                                  stop.id,
+                                  orderLabel: stop.orderLabel,
+                                  customer: stop.customer,
+                                  readOnly: true,
+                                );
+                                await onChanged();
+                              },
+                      ),
+                    if (trip.status == TripStatus.inProgress && stop.canFail)
+                      _StopActionItem(
+                        label: 'Report failed',
+                        icon: Ic.warning,
+                        destructive: true,
+                        onPressed:
+                            !s.canSaveActions || stop.pendingSync != null
                             ? null
                             : () async {
                                 await showIssueSheet(context, trip, stop);
                                 await onChanged();
                               },
-                        icon: const Icon(Icons.report_problem_outlined),
-                        label: const Text(
-                          'Report Failed Attempt',
-                          textAlign: TextAlign.center,
-                        ),
                       ),
                   ],
                 ),
-                if (!stop.hasCoordinates)
+                if (trip.status == TripStatus.inProgress &&
+                    (stop.canDeliver || stop.canFail) &&
+                    !stop.hasCoordinates) ...[
+                  const SizedBox(height: 8),
                   Text(
                     'No map location saved. Use the delivery address above.',
-                    style: T.small,
+                    style: T.smallFor(c),
                   ),
+                ],
               ],
-              if (trip.status == TripStatus.inProgress &&
-                  stop.canDeliver &&
-                  stop.hasProof) ...[
-                const SizedBox(height: 12),
-                BigButton(
-                  'Record delivery',
-                  icon: Icons.check,
-                  onTap: !s.canPerformActions || s.error != null
-                      ? null
-                      : () async {
-                          await showDeliverySheet(context, trip, stop);
-                          await onChanged();
-                        },
-                ),
-              ],
-              if (trip.status != TripStatus.loading &&
-                  trip.status != TripStatus.cancelled)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: OutlinedButton.icon(
-                    onPressed: !s.canPerformActions
-                        ? null
-                        : () async {
-                            await showProofSheet(context, stop.id);
-                            await onChanged();
-                          },
-                    icon: const Icon(Icons.camera_alt_outlined),
-                    label: const Text('Photos / signature'),
-                  ),
-                ),
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) =>
-                          OrderItemsScreen(stop: stop, tripStops: trip.stops),
-                    ),
-                  ),
-                  icon: const Icon(Icons.inventory_2_outlined),
-                  label: const Text('View All Order Items'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+            ),
+          ],
+        ),
+      );
   }
 
   Future<void> _planOrder(
@@ -657,33 +895,110 @@ class _StopCard extends StatelessWidget {
   }
 }
 
+class _StopActionItem {
+  final String label;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool destructive;
+
+  const _StopActionItem({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+    this.destructive = false,
+  });
+}
+
 class _StopActionGrid extends StatelessWidget {
-  final List<Widget> children;
-  const _StopActionGrid({required this.children});
+  final List<_StopActionItem> items;
+  const _StopActionGrid({required this.items});
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final columns =
-          constraints.maxWidth >= 280 &&
-              MediaQuery.textScalerOf(context).scale(14) <= 20
-          ? 2
-          : 1;
-      final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
-      return Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final child in children)
-            SizedBox(
-              width: width,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 64),
-                child: child,
-              ),
-            ),
-        ],
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    final c = HyOpsColors.of(context);
+
+    Widget buildButton(_StopActionItem item, {required bool tile}) {
+      final style = OutlinedButton.styleFrom(
+        foregroundColor: item.destructive ? c.danger : null,
+        side: item.destructive
+            ? BorderSide(
+                color: item.onPressed == null
+                    ? c.line
+                    : c.danger.withValues(alpha: 0.55),
+              )
+            : null,
+        minimumSize: Size(tile ? 0 : double.infinity, tile ? 68 : 48),
+        padding: tile
+            ? const EdgeInsets.symmetric(horizontal: 10, vertical: 12)
+            : const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       );
-    },
-  );
+      return OutlinedButton(
+        onPressed: item.onPressed,
+        style: style,
+        child: tile
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(item.icon, size: 18),
+                  const SizedBox(height: 6),
+                  Text(item.label, textAlign: TextAlign.center),
+                ],
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(item.icon, size: 16),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(item.label, textAlign: TextAlign.center),
+                  ),
+                ],
+              ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useGrid =
+            items.length > 1 &&
+            constraints.maxWidth >= 260 &&
+            MediaQuery.textScalerOf(context).scale(14) <= 20;
+        if (!useGrid) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < items.length; i++) ...[
+                if (i > 0) const SizedBox(height: 8),
+                buildButton(items[i], tile: false),
+              ],
+            ],
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < items.length; i += 2) ...[
+              if (i > 0) const SizedBox(height: 8),
+              if (i + 1 < items.length)
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: buildButton(items[i], tile: true)),
+                      const SizedBox(width: 8),
+                      Expanded(child: buildButton(items[i + 1], tile: true)),
+                    ],
+                  ),
+                )
+              else
+                buildButton(items[i], tile: false),
+            ],
+          ],
+        );
+      },
+    );
+  }
 }

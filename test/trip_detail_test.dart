@@ -16,14 +16,19 @@ class _TripRepository extends fixtures.FakeRepository {
 }
 
 void main() {
-  Future<AppState> setup({bool proof = false, bool grouped = true}) async {
+  Future<AppState> setup({
+    bool proof = false,
+    bool grouped = true,
+    bool done = false,
+  }) async {
     SharedPreferences.setMockInitialValues({});
     final client = fixtures.FakeClient();
     final data = fixtures.tripJson()..['status'] = 'in_transit';
     final stop = (data['stops'] as List).single as Map<String, dynamic>;
     stop.addAll({
-      'canDeliver': true,
-      'canFail': true,
+      'status': done ? 'delivered' : 'pending',
+      'canDeliver': !done,
+      'canFail': !done,
       'hasProof': proof,
       'orderGroupId': grouped ? 'group-1' : null,
       'orderGroupNumber': grouped ? 'GRP-001' : null,
@@ -53,6 +58,63 @@ void main() {
     ),
   );
 
+  testWidgets(
+    'read-only offline mode permits opening saved proofs and explains blocked writes',
+    (tester) async {
+      final state = await setup(proof: true, grouped: false, done: true);
+      state.loggedIn = true;
+      state.repository.enterOffline();
+      await tester.pumpWidget(shell(state));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text('1. Real customer'), 250);
+      await tester.tap(find.text('1. Real customer'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text('Saved proofs'), 250);
+      final proofs = find.widgetWithText(OutlinedButton, 'Saved proofs');
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(proofs);
+      await tester.pumpAndSettle();
+      expect(tester.widget<OutlinedButton>(proofs).onPressed, isNotNull);
+      expect(state.canSaveActions, false);
+      await tester.tap(proofs);
+      await tester.pumpAndSettle();
+      expect(find.text('Delivery proofs'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Offline delivery recording is not available from this server',
+        ),
+        findsWidgets,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'enabled remembered offline session keeps delivery and failure actions available',
+    (tester) async {
+      final state = await setup(proof: true, grouped: false);
+      state.loggedIn = true;
+      state.client.remember = true;
+      state.repository.syncSupported = true;
+      state.repository.offlineWritesEnabled = true;
+      state.repository.enterOffline();
+      await tester.pumpWidget(shell(state));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text('Record delivery'), 250);
+      expect(state.canSaveActions, true);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Report failed'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(state.offlineActionRestriction, null);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets('notes, grouped badge, grid and all-items navigation', (
     tester,
   ) async {
@@ -69,22 +131,42 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Record delivery'), findsNothing);
     expect(find.text('Product - Variant'), findsNothing);
-    await tester.scrollUntilVisible(find.text('View All Order Items'), 250);
+    await tester.scrollUntilVisible(find.text('Report failed'), 250);
     await tester.pumpAndSettle();
     expect(find.text('Call before unloading.'), findsOneWidget);
+    final leftBorders = tester.widgetList<DecoratedBox>(find.byType(DecoratedBox)).where((box) {
+      final dec = box.decoration;
+      if (dec is BoxDecoration && dec.border is Border) {
+        final border = dec.border! as Border;
+        return border.left != BorderSide.none &&
+            border.top == BorderSide.none &&
+            border.right == BorderSide.none &&
+            border.bottom == BorderSide.none;
+      }
+      return false;
+    });
+    expect(leftBorders, isEmpty);
+    expect(find.widgetWithText(OutlinedButton, 'Photos'), findsNothing);
     final route = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'View Road Routes'),
+      find.widgetWithText(OutlinedButton, 'Road route'),
+    );
+    final items = tester.getRect(
+      find.widgetWithText(OutlinedButton, 'Order items'),
     );
     final failed = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'Report Failed Attempt'),
+      find.widgetWithText(OutlinedButton, 'Report failed'),
     );
-    expect(route.top, failed.top);
-    expect(route.right, lessThan(failed.left));
-    await tester.tap(find.text('View All Order Items'));
+    expect(route.top, items.top);
+    expect(route.height, items.height);
+    expect(route.right, lessThan(items.left));
+    expect(route.bottom, lessThan(failed.top));
+    expect(failed.left, route.left);
+    expect(failed.right, items.right);
+    await tester.tap(find.text('Order items'));
     await tester.pumpAndSettle();
     expect(find.text('Order items'), findsOneWidget);
     expect(find.text('Product'), findsOneWidget);
-    expect(find.text('Variant'), findsOneWidget);
+    expect(find.text('Variant: Variant'), findsOneWidget);
     expect(find.text('Qty: 2'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -103,12 +185,12 @@ void main() {
     expect(find.text('Record delivery'), findsOneWidget);
     expect(find.text('Grouped Order'), findsNothing);
     final route = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'View Road Routes'),
+      find.widgetWithText(OutlinedButton, 'Road route'),
     );
-    final failed = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'Report Failed Attempt'),
+    final items = tester.getRect(
+      find.widgetWithText(OutlinedButton, 'Order items'),
     );
-    expect(route.bottom, lessThan(failed.top));
+    expect(route.bottom, lessThan(items.top));
     expect(tester.takeException(), isNull);
   });
 }

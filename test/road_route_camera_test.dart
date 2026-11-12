@@ -6,8 +6,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:hyops_flutter/core/theme.dart';
+import 'package:hyops_flutter/data/models.dart';
+import 'package:hyops_flutter/features/navigation/navigation_screen.dart';
 import 'package:hyops_flutter/features/navigation/road_route_map.dart';
 import 'package:hyops_flutter/features/navigation/route_overlay.dart';
+import 'package:hyops_flutter/features/navigation/route_service.dart';
+import 'package:hyops_flutter/state/app_state.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'widget_test.dart' as fixtures;
 
 const route = [LatLng(14.5, 121), LatLng(14.55, 121.05), LatLng(14.6, 121.1)];
 Position fix({
@@ -27,6 +34,33 @@ Position fix({
   speed: speed,
   speedAccuracy: 1,
 );
+
+class _ActiveTripRepo extends fixtures.FakeRepository {
+  final Trip assignment;
+  _ActiveTripRepo(super.client, this.assignment);
+
+  @override
+  Future<Trip> trip(String id) async => assignment;
+}
+
+class _StubRouteService extends RouteService {
+  static const _points = [
+    LatLng(14.5, 121),
+    LatLng(14.55, 121.05),
+    LatLng(14.6, 121.1),
+  ];
+
+  @override
+  Future<List<LatLng>> route(LatLng from, LatLng to) async => _points;
+
+  @override
+  Future<RouteSummary> routeSummary(LatLng from, LatLng to) async =>
+      const RouteSummary(
+        points: _points,
+        distanceMeters: 4250,
+        durationSeconds: 720,
+      );
+}
 
 class BlankTiles extends TileProvider {
   final image = MemoryImage(
@@ -340,6 +374,144 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'road route bottom card slides down to hide and slides up or taps to show again',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      SharedPreferences.setMockInitialValues({});
+      final client = fixtures.FakeClient();
+      final trip = Trip.fromJson(fixtures.tripJson()..['status'] = 'in_transit');
+      final state = AppState(
+        await SharedPreferences.getInstance(),
+        api: client,
+        driverRepository: _ActiveTripRepo(client, trip),
+        realtime: false,
+      );
+      addTearDown(state.dispose);
+      state.loggedIn = true;
+      state.trips = [trip];
+
+      await tester.pumpWidget(
+        AppScope(
+          state: state,
+          child: MaterialApp(
+            theme: driverTheme(),
+            home: NavigationScreen(
+              tripId: '12',
+              stopId: '21',
+              routeService: _StubRouteService(),
+              tileProvider: BlankTiles(),
+              currentPosition: () async => fix(),
+              positionStream: () => const Stream.empty(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('route-card-expanded')), findsOneWidget);
+      expect(find.byKey(const Key('route-card-collapsed-bar')), findsNothing);
+      expect(find.text('Real customer'), findsOneWidget);
+      expect(find.text('Saved shipping address'), findsOneWidget);
+      expect(find.text('4.3 km · ~12 min'), findsOneWidget);
+      expect(find.text('Fit route'), findsOneWidget);
+      expect(find.text('Open in Maps'), findsNothing);
+      expect(find.text('Call'), findsOneWidget);
+
+      // Slide down on the bottom card to hide it into the compact peek bar.
+      await tester.drag(
+        find.byKey(const Key('route-card-expanded')),
+        const Offset(0, 120),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('route-card-collapsed-bar')), findsOneWidget);
+      expect(find.byKey(const Key('route-card-expanded')), findsNothing);
+      expect(find.text('Saved shipping address'), findsNothing);
+      expect(find.text('Real customer'), findsOneWidget);
+      expect(find.text('4.3 km · ~12 min'), findsOneWidget);
+      expect(find.text('Fit route'), findsOneWidget);
+
+      // Slide up on the collapsed bar to show the full bottom card again.
+      await tester.drag(
+        find.byKey(const Key('route-card-collapsed-bar')),
+        const Offset(0, -100),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('route-card-expanded')), findsOneWidget);
+      expect(find.text('Saved shipping address'), findsOneWidget);
+
+      // Hide via header button and tap the collapsed bar to show again.
+      await tester.tap(find.byKey(const Key('route-card-hide-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('route-card-collapsed-bar')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('route-card-collapsed-bar')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('route-card-expanded')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'road route bottom card stays overflow-free on small screen with enlarged text',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      SharedPreferences.setMockInitialValues({});
+      final client = fixtures.FakeClient();
+      final trip = Trip.fromJson(fixtures.tripJson()..['status'] = 'in_transit');
+      final state = AppState(
+        await SharedPreferences.getInstance(),
+        api: client,
+        driverRepository: _ActiveTripRepo(client, trip),
+        realtime: false,
+      );
+      addTearDown(state.dispose);
+      state.loggedIn = true;
+      state.trips = [trip];
+
+      await tester.pumpWidget(
+        AppScope(
+          state: state,
+          child: MaterialApp(
+            theme: driverTheme(),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: const TextScaler.linear(1.6),
+              ),
+              child: child!,
+            ),
+            home: NavigationScreen(
+              tripId: '12',
+              stopId: '21',
+              routeService: _StubRouteService(),
+              tileProvider: BlankTiles(),
+              currentPosition: () async => fix(),
+              positionStream: () => const Stream.empty(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('route-card-expanded')), findsOneWidget);
+
+      await tester.drag(
+        find.byKey(const Key('route-card-drag-handle')),
+        const Offset(0, 100),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('route-card-collapsed-bar')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

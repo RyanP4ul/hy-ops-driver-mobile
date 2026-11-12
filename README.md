@@ -68,6 +68,8 @@ passwords, tokens, or server secrets in them.
 
 ## Automatic refresh
 
+Offline-first reads, durable delivery/proof/return commands and automatic foreground/native synchronization are documented in [OFFLINE_ARCHITECTURE.md](OFFLINE_ARCHITECTURE.md). Deploy the backend receipt migration first. Enable **Settings > General > Offline deliveries > Offline delivery recording** on the backend after staging/device acceptance; new queued writes default to disabled. Existing queued work can drain while new enqueueing is disabled. Rebuild after `flutter pub get` for Workmanager's native plugins. Windows desktop plugin setup may require Developer Mode; Android/iOS remain the targets. See the [acceptance report](OFFLINE_SYNC_ACCEPTANCE_REPORT.md) for remaining platform checks.
+
 ### Immediate delivery assignments
 
 While signed in with the app open, new deliveries, reassignments, cancellations,

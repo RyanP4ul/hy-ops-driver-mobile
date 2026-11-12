@@ -15,7 +15,8 @@ Tone paymentTone(PaymentArrangement p) => switch (p) {
 
 class PaymentPill extends StatelessWidget {
   final PaymentArrangement payment;
-  PaymentPill(this.payment, {super.key});
+  const PaymentPill(this.payment, {super.key});
+
   @override
   Widget build(BuildContext context) =>
       StatusPill(payment.label, tone: paymentTone(payment));
@@ -23,38 +24,45 @@ class PaymentPill extends StatelessWidget {
 
 /// One-line instruction for the driver about money at the door.
 String paymentHint(PaymentArrangement p, double balance) => switch (p) {
-  PaymentArrangement.fullyPaid => 'Fully paid - check recorded amounts below',
-  PaymentArrangement.partiallyPaid => 'Collect ${rm(balance)} on delivery',
-  PaymentArrangement.net30 => 'Net 30 - hand over invoice, no payment now',
-  PaymentArrangement.payOnDelivery => 'Collect ${rm(balance)} on delivery',
+  PaymentArrangement.fullyPaid => 'Fully paid - no cash due',
+  PaymentArrangement.partiallyPaid => 'Collect ${formatPhp(balance)} on delivery',
+  PaymentArrangement.net30 => 'Net 30 - leave invoice, no cash due',
+  PaymentArrangement.payOnDelivery => 'Collect ${formatPhp(balance)} on delivery',
 };
 
 /// Shown in the delivery sheet when the driver needs to act on payment.
 class PaymentBanner extends StatelessWidget {
   final Stop stop;
-  PaymentBanner(this.stop, {super.key});
+  const PaymentBanner(this.stop, {super.key});
+
   @override
   Widget build(BuildContext context) {
-    if (stop.payment == PaymentArrangement.fullyPaid) return SizedBox.shrink();
+    if (stop.payment == PaymentArrangement.fullyPaid) {
+      return const SizedBox.shrink();
+    }
+    final c = HyOpsColors.of(context);
     final partial =
         stop.payment == PaymentArrangement.partiallyPaid ||
         stop.payment == PaymentArrangement.payOnDelivery;
+    final fg = partial ? c.warn : c.info;
+    final bg = partial ? c.warnSoft : c.infoSoft;
     return Padding(
-      padding: EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Panel(
-        color: partial ? P.warnSoft : P.infoSoft,
-        radius: 14,
-        padding: EdgeInsets.all(14),
+        color: bg,
+        borderColor: fg.withValues(alpha: 0.25),
+        radius: 10,
+        padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            Icon(Ic.wallet, size: 20, color: partial ? P.warn : P.info),
-            SizedBox(width: 12),
+            Icon(Ic.wallet, size: 18, color: fg),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
                 partial
-                    ? 'Collect ${rm(stop.collectNow)} from ${stop.contact} before handing over.'
-                    : 'Net 30: leave the invoice with ${stop.contact}. No payment due now.',
-                style: T.bodyBold,
+                    ? 'Collect ${formatPhp(stop.collectNow)} from ${stop.contact.isEmpty ? stop.customer : stop.contact} before handing over.'
+                    : 'Net 30: leave the invoice with ${stop.contact.isEmpty ? stop.customer : stop.contact}. No payment due now.',
+                style: T.bodyBoldFor(c).copyWith(fontSize: 14),
               ),
             ),
           ],
@@ -64,25 +72,147 @@ class PaymentBanner extends StatelessWidget {
   }
 }
 
+/// High-clarity collection box used on stop cards and Home next-stop summary.
+class CollectionStrip extends StatelessWidget {
+  final PaymentArrangement payment;
+  final double collectNow;
+  final double total;
+  final double paid;
+  final bool completed;
+
+  const CollectionStrip({
+    super.key,
+    required this.payment,
+    required this.collectNow,
+    required this.total,
+    required this.paid,
+    this.completed = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
+    if (completed) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: c.surfaceSubtle,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: c.line),
+        ),
+        child: Wrap(
+          spacing: 10,
+          runSpacing: 6,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            PaymentPill(payment),
+            Text(
+              'Order ${formatPhp(total)} · Paid ${formatPhp(paid)}',
+              style: T.smallFor(c).copyWith(
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final needsCash =
+        payment == PaymentArrangement.partiallyPaid ||
+        payment == PaymentArrangement.payOnDelivery;
+    final bg = needsCash ? c.warnSoft : c.surfaceSubtle;
+    final border = needsCash ? c.warn.withValues(alpha: 0.3) : c.line;
+    final labelColor = needsCash ? c.warn : c.muted;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  payment == PaymentArrangement.net30
+                      ? 'Net 30 invoice'
+                      : payment == PaymentArrangement.fullyPaid
+                      ? 'Payment status'
+                      : 'Collect on delivery',
+                  style: T.smallBoldFor(c).copyWith(color: labelColor),
+                ),
+                PaymentPill(payment),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                payment == PaymentArrangement.fullyPaid
+                    ? 'No cash due'
+                    : payment == PaymentArrangement.net30
+                    ? 'No cash due now'
+                    : formatPhp(collectNow),
+                style: T.amountFor(c),
+              ),
+              Text(
+                'Order ${formatPhp(total)} · Paid ${formatPhp(paid)}',
+                style: T.smallFor(c).copyWith(
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class KvRow extends StatelessWidget {
   final String label;
   final String value;
   const KvRow(this.label, this.value, {super.key});
+
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.symmetric(vertical: 6),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: Text(label, style: T.small)),
-        const SizedBox(width: 16),
-        Expanded(
-          flex: 2,
-          child: Text(value, textAlign: TextAlign.right, style: T.bodyBold),
-        ),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: Text(label, style: T.smallFor(c))),
+          const SizedBox(width: 16),
+          Expanded(
+            flex: 2,
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: T.bodyBoldFor(c).copyWith(
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Full payment breakdown for one order.
@@ -92,7 +222,8 @@ class PaymentPanel extends StatelessWidget {
   final double paid;
   final String combinedPaymentNumber;
   final double combinedPaymentAllocation;
-  PaymentPanel({
+
+  const PaymentPanel({
     super.key,
     required this.payment,
     required this.total,
@@ -100,31 +231,47 @@ class PaymentPanel extends StatelessWidget {
     this.combinedPaymentNumber = '',
     this.combinedPaymentAllocation = double.nan,
   });
+
   @override
   Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
     final balance = total - paid;
     return Panel(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Column(
         children: [
-          Row(
-            children: [
-              Expanded(child: Text('Arrangement', style: T.small)),
-              const SizedBox(width: 12),
-              Flexible(child: PaymentPill(payment)),
-            ],
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Expanded(child: Text('Arrangement', style: T.smallFor(c))),
+                const SizedBox(width: 12),
+                Flexible(child: PaymentPill(payment)),
+              ],
+            ),
           ),
-          KvRow('Order total', rm(total)),
-          KvRow('Paid', rm(paid)),
+          KvRow('Order total', formatPhp(total)),
+          KvRow('Paid', formatPhp(paid)),
           if (combinedPaymentNumber.isNotEmpty) ...[
-            KvRow('Combined payment', combinedPaymentNumber),
-            KvRow('Original allocation', rm(combinedPaymentAllocation)),
+            KvRow('Combined payment', shortRef(combinedPaymentNumber)),
+            KvRow('Allocated amount', formatPhp(combinedPaymentAllocation)),
           ],
+          Divider(height: 12, color: c.line),
           KvRow(
             payment == PaymentArrangement.net30
                 ? 'Due within 30 days'
                 : 'Balance',
-            rm(balance),
+            formatPhp(balance),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 2),
+              child: Text(
+                'Staff records payment receipts.',
+                style: T.smallFor(c),
+              ),
+            ),
           ),
         ],
       ),

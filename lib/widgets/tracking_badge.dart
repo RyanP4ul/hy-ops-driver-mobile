@@ -13,39 +13,45 @@ class TrackingBadge extends StatelessWidget {
     final t = AppScope.of(context).tracking;
     return ListenableBuilder(
       listenable: t,
-      builder: (_, __) {
-        if (t.status == TrackingStatus.idle) return SizedBox.shrink();
+      builder: (_, _) {
+        if (t.status == TrackingStatus.idle) return const SizedBox.shrink();
+        final c = HyOpsColors.of(context);
         final (label, color, soft) = switch (t.status) {
           TrackingStatus.live when t.socket == SocketStatus.connected => (
             'Location shared with dispatch',
-            P.success,
-            P.successSoft,
+            c.success,
+            c.successSoft,
           ),
           TrackingStatus.live => (
             'Reconnecting location sharing...',
-            P.warn,
-            P.warnSoft,
+            c.warn,
+            c.warnSoft,
           ),
-          TrackingStatus.starting => ('Starting location...', P.muted, P.chip),
+          TrackingStatus.starting => (
+            'Starting location...',
+            c.muted,
+            c.surfaceSubtle,
+          ),
           TrackingStatus.locationOff => (
             'Location is off - not sharing',
-            P.danger,
-            P.dangerSoft,
+            c.danger,
+            c.dangerSoft,
           ),
           TrackingStatus.noPermission => (
             'Location permission needed',
-            P.danger,
-            P.dangerSoft,
+            c.danger,
+            c.dangerSoft,
           ),
-          _ => ('Location error - retrying', P.warn, P.warnSoft),
+          _ => ('Location error - retrying', c.warn, c.warnSoft),
         };
         return Semantics(
           liveRegion: true,
           child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: soft,
               borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: color.withValues(alpha: 0.25)),
             ),
             child: Row(
               children: [
@@ -57,13 +63,13 @@ class TrackingBadge extends StatelessWidget {
                     shape: BoxShape.circle,
                   ),
                 ),
-                SizedBox(width: 10),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     label,
                     style: TextStyle(
                       fontSize: 13,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w600,
                       color: color,
                     ),
                   ),

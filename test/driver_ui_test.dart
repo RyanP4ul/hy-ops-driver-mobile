@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:forui/forui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hyops_flutter/core/palette.dart';
 import 'package:hyops_flutter/core/theme.dart';
@@ -141,12 +140,7 @@ void main() {
                         size.width == 320 ? 1.6 : 1,
                       ),
                     ),
-                    child: FTheme(
-                      data: dark
-                          ? FTheme.neutral.dark.touch
-                          : FTheme.neutral.light.touch,
-                      child: child!,
-                    ),
+                    child: child!,
                   ),
                   home: RepaintBoundary(
                     key: key,

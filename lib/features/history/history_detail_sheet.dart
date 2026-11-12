@@ -24,74 +24,104 @@ class _HistoryDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final e = entry;
-    return SafeArea(
-      top: false,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    final c = HyOpsColors.of(context);
+    final showContact =
+        e.contact.trim().isNotEmpty &&
+        e.contact.trim().toLowerCase() != e.customer.trim().toLowerCase();
+
+    return AppBottomSheet(
+      title: e.customer,
+      subtitle: 'Delivery ${e.tripId} · ${manilaSchedule(e.when)} (Manila)',
+      closeTooltip: 'Close delivery record',
+      trailingBadge: StatusPill(
+        e.outcome,
+        tone: e.success ? Tone.green : Tone.danger,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (e.reason != null) ...[
+            FeedbackStrip(e.reason!),
+            const SizedBox(height: 12),
+          ],
+          const SectionTitle(
+            'Delivery details',
+            padding: EdgeInsets.only(top: 4, bottom: 10),
+          ),
+          Panel(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: WorkspaceHeading(
-                    e.customer,
-                    subtitle:
-                        'Delivery ${e.tripId} · ${manilaSchedule(e.when)} (Manila)',
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Close delivery record',
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close),
-                ),
+                if (e.orderNumber.isNotEmpty) ...[
+                  KvRow('Order', e.orderNumber),
+                  Divider(height: 12, color: c.line),
+                ],
+                if (showContact) ...[
+                  KvRow('Contact', e.contact),
+                  Divider(height: 12, color: c.line),
+                ],
+                Text('Address', style: T.smallFor(c)),
+                const SizedBox(height: 4),
+                Text(e.address, style: T.bodyFor(c)),
+                if (e.phone.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  CallCopyPhoneRow(phone: e.phone, compact: true),
+                ],
               ],
             ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: StatusPill(
-                e.outcome,
-                tone: e.success ? Tone.green : Tone.danger,
-              ),
+          ),
+          SectionTitle(
+            'Order items',
+            trailing: Text('${e.itemCount} total', style: T.smallBoldFor(c)),
+          ),
+          Panel(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Column(
+              children: [
+                for (var i = 0; i < e.items.length; i++) ...[
+                  if (i > 0) Divider(height: 1, color: c.line),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            e.items[i].name,
+                            style: T.bodyFor(c),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: c.surfaceSubtle,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '×${e.items[i].qty}',
+                            style: T.bodyBoldFor(c),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
             ),
-            if (e.reason != null) ...[
-              const SizedBox(height: 12),
-              FeedbackStrip(e.reason!),
-            ],
-            const SectionTitle('Delivery details'),
-            const Divider(),
-            if (e.orderNumber.isNotEmpty) KvRow('Order', e.orderNumber),
-            KvRow('Address', e.address),
-            KvRow('Contact', e.contact),
-            KvRow('Phone', e.phone),
-            SectionTitle(
-              'Order items',
-              trailing: Text('${e.itemCount} total', style: T.smallBold),
-            ),
-            const Divider(),
-            for (final item in e.items)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    Expanded(child: Text(item.name, style: T.body)),
-                    const SizedBox(width: 12),
-                    Text('×${item.qty}', style: T.bodyBold),
-                  ],
-                ),
-              ),
-            const SectionTitle('Payment'),
-            PaymentPanel(
-              payment: e.payment,
-              total: e.total,
-              paid: e.paid,
-              combinedPaymentNumber: e.combinedPaymentNumber,
-              combinedPaymentAllocation: e.combinedPaymentAllocation,
-            ),
-          ],
-        ),
+          ),
+          const SectionTitle('Payment'),
+          PaymentPanel(
+            payment: e.payment,
+            total: e.total,
+            paid: e.paid,
+            combinedPaymentNumber: e.combinedPaymentNumber,
+            combinedPaymentAllocation: e.combinedPaymentAllocation,
+          ),
+        ],
       ),
     );
   }

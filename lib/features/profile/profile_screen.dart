@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/format.dart';
 import '../../core/icons.dart';
 import '../../core/palette.dart';
 import '../../state/app_state.dart';
@@ -15,97 +16,186 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    final c = HyOpsColors.of(context);
     final driver = state.driver;
+    final phoneDisplay = formatPhoneDisplay(driver.phone);
+
     return WorkspaceList(
       children: [
-        const WorkspaceHeading('Profile'),
-        const SizedBox(height: 24),
+        const WorkspaceHeading(
+          'Profile',
+          trailing: SyncStatusHeader(),
+        ),
+        const SyncPanel(),
+        const SizedBox(height: 16),
         WorkspaceColumns(
           first: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Driver account', style: T.title),
-              const SizedBox(height: 12),
+              Text('Driver account', style: T.titleFor(c)),
+              const SizedBox(height: 10),
               Panel(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(driver.name, style: T.title),
-                    Text('Driver ID ${driver.id}', style: T.small),
-                    const SizedBox(height: 12),
-                    const Divider(),
-                    KvRow('Phone', driver.phone),
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: c.primarySoft,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: c.primary.withValues(alpha: 0.25),
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            formatInitials(driver.name),
+                            style: T.subheadingFor(c).copyWith(
+                              color: c.actionInk,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(driver.name, style: T.titleFor(c)),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Driver ID ${driver.id}',
+                                style: T.smallFor(c),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Divider(height: 1, color: c.line),
+                    const SizedBox(height: 8),
+                    if (phoneDisplay.isNotEmpty) KvRow('Phone', phoneDisplay),
                     const KvRow('Vehicle', 'Assigned per trip'),
                   ],
                 ),
               ),
               const SectionTitle('Location and connection'),
-              const TrackingBadge(),
-              const SyncPanel(),
-              Text(
-                'Signing out stops location sharing with dispatch.',
-                style: T.small,
+              Panel(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const TrackingBadge(),
+                    if (state.tracking.status.name != 'idle')
+                      const SizedBox(height: 10),
+                    Text(
+                      'Live GPS sharing runs automatically while signed in online. Signing out stops dispatch location sharing.',
+                      style: T.smallFor(c),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
           second: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Appearance', style: T.title),
-              const SizedBox(height: 12),
-              for (final (mode, label, icon) in const [
-                (
-                  AppThemeMode.system,
-                  'System',
-                  Icons.settings_brightness_outlined,
-                ),
-                (AppThemeMode.light, 'Light', Icons.light_mode_outlined),
-                (AppThemeMode.dark, 'Dark', Icons.dark_mode_outlined),
-              ]) ...[
-                ListTile(
-                  tileColor: P.surface,
-                  selected: state.themeMode == mode,
-                  selectedTileColor: P.primarySoft,
-                  selectedColor: P.ink,
-                  leading: Icon(icon),
-                  title: Text(label),
-                  trailing: state.themeMode == mode
-                      ? const Icon(Icons.check)
-                      : null,
-                  onTap: () => state.setThemeMode(mode),
-                ),
-                const Divider(),
-              ],
-              const SectionTitle('Session'),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Ic.logout),
-                  label: const Text('Sign out'),
-                  onPressed: () async {
-                    final confirmed = await showDialog<bool>(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: const Text('Sign out of HYOps Driver?'),
-                        content: const Text(
-                          'Location sharing will stop until you sign in again.',
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Cancel'),
-                          ),
-                          FilledButton(
-                            onPressed: () => Navigator.pop(context, true),
-                            child: const Text('Sign out'),
-                          ),
-                        ],
+              Text('Appearance', style: T.titleFor(c)),
+              const SizedBox(height: 10),
+              Panel(
+                padding: const EdgeInsets.all(12),
+                child: SegmentedButton<AppThemeMode>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: AppThemeMode.system,
+                      icon: Icon(Ic.deviceTheme, size: 16),
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('System'),
                       ),
-                    );
-                    if (confirmed == true && context.mounted)
-                      await state.logout();
-                  },
+                    ),
+                    ButtonSegment(
+                      value: AppThemeMode.light,
+                      icon: Icon(Ic.sun, size: 16),
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('Light'),
+                      ),
+                    ),
+                    ButtonSegment(
+                      value: AppThemeMode.dark,
+                      icon: Icon(Ic.moon, size: 16),
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('Dark'),
+                      ),
+                    ),
+                  ],
+                  selected: {state.themeMode},
+                  onSelectionChanged: (modes) =>
+                      state.setThemeMode(modes.single),
                 ),
+              ),
+              const SectionTitle('Preferences'),
+              Panel(
+                padding: EdgeInsets.zero,
+                child: SwitchListTile(
+                  value: state.notifications,
+                  onChanged: state.toggleNotifications,
+                  secondary: Icon(Ic.bell, size: 20, color: c.muted),
+                  title: Text('Assignment alerts', style: T.bodyBoldFor(c)),
+                  subtitle: Text(
+                    'Show an in-app banner when dispatch assigns or updates a trip.',
+                    style: T.smallFor(c),
+                  ),
+                ),
+              ),
+              const SectionTitle('Session'),
+              BigButton(
+                'Sign out',
+                icon: Ic.logout,
+                style: BtnStyle.dangerOutline,
+                onTap: () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('Sign out of HYOps Driver?'),
+                      content: Text(
+                        state.pendingSyncCount > 0
+                            ? '${state.pendingSyncCount} actions await confirmation. Cancel and sync first, or discard device copies and sign out. Accepted server actions remain recorded. Location sharing will stop.'
+                            : 'Location sharing will stop until you sign in again.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: const Text('Cancel'),
+                        ),
+                        FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: c.danger,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: Text(
+                            state.pendingSyncCount > 0
+                                ? 'Discard and sign out'
+                                : 'Sign out',
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed == true && context.mounted) {
+                    await state.logout(
+                      discardPending: state.pendingSyncCount > 0,
+                    );
+                  }
+                },
               ),
             ],
           ),

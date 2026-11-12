@@ -25,6 +25,7 @@ class ApiClient {
   void Function()? onSessionLost;
   final ValueNotifier<bool> networkUnavailable = ValueNotifier(false);
   Future<void> Function(String scope)? onCacheInvalidated;
+  Future<void> Function(String scope)? onSessionQuarantined;
   String? _cacheScope;
   String? get cacheScope => _cacheScope;
   int get sessionGeneration => _generation;
@@ -82,6 +83,19 @@ class ApiClient {
               response.requestOptions.uri,
               values.map(Cookie.fromSetCookieValue).toList(),
             );
+            if (response.requestOptions.path == '/auth/refresh' && remember) {
+              final rotated = values
+                  .map(Cookie.fromSetCookieValue)
+                  .where((c) => c.name == 'refresh_token')
+                  .firstOrNull;
+              if (rotated != null) {
+                final generation = response.requestOptions.extra['generation'];
+                await _persist(() async {
+                  if (generation == _generation && remember)
+                    await _store.write(rotated.value);
+                });
+              }
+            }
           }
           handler.next(response);
         },
@@ -132,6 +146,10 @@ class ApiClient {
     final token = await _store.read();
     remember = token != null;
     _cacheScope = token == null ? null : _scopeFor(token);
+    if (token != null && _store is SessionIdentityStore) {
+      _cacheScope =
+          await (_store as SessionIdentityStore).readScope() ?? _cacheScope;
+    }
     if (token != null)
       await cookies.saveFromResponse(_origin, [
         Cookie('refresh_token', token)..path = '/',
@@ -192,11 +210,21 @@ class ApiClient {
   }
 
   Future<void> _expire() async {
+    if (_cacheScope != null) {
+      try {
+        await onSessionQuarantined?.call(_cacheScope!);
+      } catch (_) {
+        debugPrint(
+          'Saved work could not be marked; credentials will still be cleared.',
+        );
+      }
+    }
     await _clear(cancelRequests: false);
     onSessionLost?.call();
   }
 
   Future<void> validate() async {
+    final generation = _generation;
     Response<dynamic> response;
     try {
       response = await dio.get<dynamic>('/auth/me');
@@ -211,9 +239,22 @@ class ApiClient {
         rethrow;
       }
     }
+    if (generation != _generation) throw StateError('Session changed.');
     if ((response.data as Map)['role'] != 'driver') {
       await logout();
       throw StateError('Sign in with a driver account.');
+    }
+    final id = (response.data as Map)['id'];
+    if (id != null && _store is SessionIdentityStore) {
+      final scope = sha256
+          .convert(utf8.encode('${_origin.toString()}|driver:$id'))
+          .toString();
+      _cacheScope = scope;
+      if (remember)
+        await _persist(() async {
+          if (generation == _generation && remember)
+            await (_store as SessionIdentityStore).writeScope(scope);
+        });
     }
   }
 
@@ -235,6 +276,12 @@ class ApiClient {
     }
     await clear();
     return revoked;
+  }
+
+  void cancelPendingRequests() {
+    _generation++;
+    _sessionCancel.cancel('Session operation canceled.');
+    _sessionCancel = CancelToken();
   }
 
   Future<void> clear() => _clear(cancelRequests: true);

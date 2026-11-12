@@ -34,6 +34,8 @@ class GroupedRepository extends fixtures.FakeRepository {
   String driverId = '3';
   Map<String, dynamic> data = groupedTrip();
   final List<String> outcomes = [];
+  final Map<String, Map<String, dynamic>> plans = {};
+  bool failPlanning = false;
   GroupedRepository(super.client) {
     savedProofs = [
       {'id': 'proof', 'kind': 'photo'},
@@ -44,11 +46,30 @@ class GroupedRepository extends fixtures.FakeRepository {
   Future<Driver> profile() async => Driver('Driver', driverId, '', '', '');
 
   @override
-  Future<Trip> trip(String id) async => Trip.fromJson(data);
+  Future<Trip> trip(String id) async =>
+      Trip.fromJson({...data, 'stopPlan': plans[driverId]});
 
   @override
   Future<PageResult<Trip>> trips({int page = 0, bool past = false}) async =>
-      PageResult([Trip.fromJson(data)], 1);
+      PageResult([await trip('12')], 1);
+
+  @override
+  Future<void> planStop(String stopId, {required bool skip}) async {
+    if (failPlanning) throw StateError('Planning request failed');
+    final plan = plans.putIfAbsent(
+      driverId,
+      () => {'nextStopId': null, 'skippedStopIds': <String>[]},
+    );
+    final skipped = plan['skippedStopIds'] as List<String>;
+    if (skip) {
+      if (!skipped.contains(stopId)) skipped.add(stopId);
+      if (plan['nextStopId'] == stopId) plan['nextStopId'] = null;
+    } else {
+      skipped.remove(stopId);
+      plan['nextStopId'] = stopId;
+    }
+    data['version'] = (data['version'] as int) + 1;
+  }
 
   @override
   Future<void> outcome(
@@ -157,6 +178,54 @@ void main() {
     expect(state.tripById('12').deferredStopIds, {'1', '2'});
     expect(state.tripById('12').currentStop?.id, '3');
   });
+
+  test(
+    'offline planning cannot create a choice that is invisible to dispatch',
+    () async {
+      final (state, repo) = await setup();
+      repo.enterOffline();
+      expect(
+        () => state.planGroupedOrder('12', '1', skip: true),
+        throwsStateError,
+      );
+      expect(repo.plans, isEmpty);
+      expect(state.tripById('12').deferredStopIds, isEmpty);
+      expect(state.canPerformActions, isFalse);
+    },
+  );
+
+  test(
+    'a failed sync leaves the displayed plan unchanged and can be retried',
+    () async {
+      final (state, repo) = await setup();
+      repo.failPlanning = true;
+      await expectLater(
+        state.planGroupedOrder('12', '1', skip: true),
+        throwsStateError,
+      );
+      expect(state.tripById('12').deferredStopIds, isEmpty);
+      expect(state.busy, isFalse);
+      repo.failPlanning = false;
+      await state.planGroupedOrder('12', '1', skip: true);
+      expect(state.tripById('12').deferredStopIds, {'1'});
+    },
+  );
+
+  test(
+    'a fresh device reads the server plan without local preferences',
+    () async {
+      final (state, repo) = await setup();
+      await state.planGroupedOrder('12', '1', skip: true);
+      await state.planGroupedOrder('12', '2');
+      final (otherDevice, _) = await setup(reset: true, repository: repo);
+      expect(otherDevice.tripById('12').deferredStopIds, {'1'});
+      expect(otherDevice.tripById('12').currentStop?.id, '2');
+      repo.plans['3'] = {'nextStopId': '1', 'skippedStopIds': <String>[]};
+      await state.refresh();
+      expect(state.tripById('12').deferredStopIds, isEmpty);
+      expect(state.tripById('12').currentStop?.id, '1');
+    },
+  );
 
   test('delivering a later group order updates only that order', () async {
     final (state, repo) = await setup();

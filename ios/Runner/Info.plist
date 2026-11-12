@@ -35,6 +35,13 @@
 		<key>UIBackgroundModes</key>
 		<array>
 			<string>location</string>
+			<string>fetch</string>
+			<string>processing</string>
+		</array>
+		<key>BGTaskSchedulerPermittedIdentifiers</key>
+		<array>
+			<string>com.example.hyops_flutter.sync</string>
+			<string>com.example.hyops_flutter.periodic_sync</string>
 		</array>
 		<key>LSRequiresIPhoneOS</key>
 		<true/>

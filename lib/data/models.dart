@@ -57,6 +57,8 @@ class Item {
 }
 
 class Stop {
+  String? pendingSync, syncError;
+  bool hasLocalProof = false;
   final String id;
   final String orderId;
   final String orderNumber;
@@ -153,6 +155,9 @@ class Stop {
     stop.canFail = j['canFail'] == true;
     stop.serverCollect = remoteNumber(j['collectNow']);
     stop.failReason = j['reason'] as String?;
+    stop.pendingSync = j['pendingSync'] as String?;
+    stop.syncError = j['syncError'] as String?;
+    stop.hasLocalProof = j['hasLocalProof'] == true;
     return stop;
   }
 
@@ -168,12 +173,15 @@ class Stop {
 }
 
 class ReturnPickup {
+  final String? pendingSync, syncError;
   final String id, orderNumber, customer, address, phone, reason, status;
   final int version;
   final double lat, lng;
   final List<Item> items;
   ReturnPickup.fromJson(Map<String, dynamic> j)
-    : id = '${j['id']}',
+    : pendingSync = j['pendingSync'] as String?,
+      syncError = j['syncError'] as String?,
+      id = '${j['id']}',
       orderNumber = '${j['orderNumber']}',
       customer = j['customer'] as String? ?? 'Customer',
       address = j['address'] as String? ?? 'Address unavailable',
@@ -191,7 +199,7 @@ class ReturnPickup {
 }
 
 class Trip {
-  // Driver planning preferences only. Outcomes always come from the server.
+  // Synced planning choices. Skipping never changes a delivery outcome.
   String? preferredStopId;
   final Set<String> deferredStopIds = {};
   final String id;
@@ -250,6 +258,19 @@ class Trip {
     t.scheduledAt = DateTime.tryParse(j['scheduledAt'] as String);
     t.warehouseLat = remoteNumber(j['warehouse']?['latitude']);
     t.warehouseLng = remoteNumber(j['warehouse']?['longitude']);
+    final plan = j['stopPlan'] as Map?;
+    if (status == TripStatus.inProgress && plan != null) {
+      final pending = t.stops.where((s) => !s.isDone).map((s) => s.id).toSet();
+      t.deferredStopIds.addAll(
+        (plan['skippedStopIds'] as List? ?? [])
+            .map((id) => '$id')
+            .where(pending.contains),
+      );
+      final next = plan['nextStopId']?.toString();
+      if (pending.contains(next) && !t.deferredStopIds.contains(next)) {
+        t.preferredStopId = next;
+      }
+    }
     return t;
   }
 

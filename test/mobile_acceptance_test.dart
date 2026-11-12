@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:forui/forui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hyops_flutter/data/models.dart';
 import 'package:hyops_flutter/repositories/driver_repository.dart';
@@ -57,8 +56,6 @@ class AcceptanceRepository extends fixtures.FakeRepository {
 Widget shell(AppState state, Widget page) => AppScope(
   state: state,
   child: MaterialApp(
-    builder: (_, child) =>
-        FTheme(data: FTheme.neutral.light.touch, child: child!),
     home: Scaffold(body: page),
   ),
 );
@@ -82,7 +79,7 @@ void main() {
   }
 
   testWidgets(
-    'offline mode visibly disables trip starts, outcomes and proof capture',
+    'unconfigured server explains offline restrictions and blocks operational writes',
     (tester) async {
       final (state, repo) = await setup();
       final today = DateTime.now()
@@ -99,7 +96,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        find.textContaining('Offline - viewing saved data'),
+        find.textContaining('Offline delivery recording is not available from this server'),
         findsOneWidget,
       );
       expect(
@@ -139,10 +136,13 @@ void main() {
       );
       expect(
         tester
-            .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Sign'))
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Choose photo'),
+            )
             .onPressed,
         null,
       );
+      expect(find.text('Sign'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -264,7 +264,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       final button = tester.widget<OutlinedButton>(
-        find.widgetWithText(OutlinedButton, 'View Road Routes'),
+        find.widgetWithText(OutlinedButton, 'Road route'),
       );
       expect(button.onPressed, null);
       expect(find.textContaining('Unverified'), findsWidgets);
@@ -286,48 +286,4 @@ void main() {
       expect(trip.scheduledAt!.toUtc(), DateTime.utc(2026, 10, 31, 16));
     }
   });
-  testWidgets(
-    'signature cannot be submitted blank and can be cleared after drawing',
-    (tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(home: Scaffold(body: SignatureDialog())),
-      );
-      expect(
-        tester
-            .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Use signature'),
-            )
-            .onPressed,
-        null,
-      );
-      final canvas = find.byKey(const Key('signature-canvas'));
-      final gesture = await tester.startGesture(
-        tester.getTopLeft(canvas) + const Offset(20, 20),
-      );
-      await gesture.moveBy(const Offset(15, 5));
-      await gesture.moveBy(const Offset(15, 5));
-      await gesture.moveBy(const Offset(15, -5));
-      await gesture.up();
-      await tester.pump();
-      expect(
-        tester
-            .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Use signature'),
-            )
-            .onPressed,
-        isNotNull,
-      );
-      await tester.tap(find.text('Clear'));
-      await tester.pump();
-      expect(
-        tester
-            .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Use signature'),
-            )
-            .onPressed,
-        null,
-      );
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
 }

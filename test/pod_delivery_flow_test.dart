@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -63,6 +64,7 @@ void main() {
       await tester.tap(find.text('Record delivery'));
       await tester.pumpAndSettle();
       expect(find.text('Proof of Delivery (POD)'), findsOneWidget);
+      expect(find.text('Sign'), findsNothing);
       expect(find.text('Confirm delivery'), findsNothing);
       expect(
         tester
@@ -97,7 +99,7 @@ void main() {
       );
       expect(tester.widget<FilledButton>(next).onPressed, isNull);
       repo.savedProofs = [
-        {'id': 'proof', 'kind': 'signature', 'createdAt': 'now'},
+        {'id': 'proof', 'kind': 'photo', 'createdAt': 'now'},
       ];
       repo.proofRead!.complete(repo.savedProofs);
       await tester.pumpAndSettle();
@@ -151,6 +153,10 @@ void main() {
       expect(repo.keys, isEmpty);
       await state.recordOutcome(trip, stop, reason: 'Customer unavailable');
       expect(repo.keys, hasLength(1));
+      await expectLater(
+        repo.uploadProof('21', Uint8List.fromList([1, 2, 3]), 'signature', 'k1'),
+        throwsStateError,
+      );
     },
   );
 }

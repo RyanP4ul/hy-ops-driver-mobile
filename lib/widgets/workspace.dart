@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/icons.dart';
 import '../core/palette.dart';
 
 class WorkspaceList extends StatelessWidget {
@@ -21,7 +22,7 @@ class WorkspaceList extends StatelessWidget {
       final inset = math.max(gutter, (constraints.maxWidth - maxWidth) / 2);
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.fromLTRB(inset, 20, inset, 32),
+        padding: EdgeInsets.fromLTRB(inset, 16, inset, 32),
         children: children,
       );
     },
@@ -31,20 +32,55 @@ class WorkspaceList extends StatelessWidget {
 class WorkspaceHeading extends StatelessWidget {
   final String title;
   final String? subtitle;
+  final Widget? trailing;
 
-  const WorkspaceHeading(this.title, {super.key, this.subtitle});
+  const WorkspaceHeading(
+    this.title, {
+    super.key,
+    this.subtitle,
+    this.trailing,
+  });
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Semantics(header: true, child: Text(title, style: T.display)),
-      if (subtitle != null) ...[
-        const SizedBox(height: 6),
-        Text(subtitle!, style: T.small),
+  Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
+    final heading = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(header: true, child: Text(title, style: T.displayFor(c))),
+        if (subtitle != null && subtitle!.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(subtitle!, style: T.smallFor(c)),
+        ],
       ],
-    ],
-  );
+    );
+    if (trailing == null) return heading;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stack =
+            constraints.maxWidth < 340 ||
+            MediaQuery.textScalerOf(context).scale(15) > 19;
+        if (stack) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              heading,
+              const SizedBox(height: 10),
+              Align(alignment: Alignment.centerLeft, child: trailing!),
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: heading),
+            const SizedBox(width: 12),
+            trailing!,
+          ],
+        );
+      },
+    );
+  }
 }
 
 class WorkspaceColumns extends StatelessWidget {
@@ -92,54 +128,82 @@ class RecordRow extends StatelessWidget {
   const RecordRow({super.key, required this.content, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: P.surface,
-    child: InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Expanded(child: content),
-            const SizedBox(width: 12),
-            Icon(Icons.chevron_right, color: P.muted),
-          ],
+  Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
+    return Material(
+      color: c.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: c.line),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Expanded(child: content),
+              const SizedBox(width: 12),
+              Icon(Ic.chevron, color: c.muted, size: 18),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class FeedbackStrip extends StatelessWidget {
   final String message;
   final bool warning;
+  final bool info;
+  final Widget? action;
 
-  const FeedbackStrip(this.message, {super.key, this.warning = false});
+  const FeedbackStrip(
+    this.message, {
+    super.key,
+    this.warning = false,
+    this.info = false,
+    this.action,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final color = warning ? P.warn : P.danger;
+    final c = HyOpsColors.of(context);
+    final (bg, fg, icon) = info
+        ? (c.infoSoft, c.info, Ic.info)
+        : warning
+        ? (c.warnSoft, c.warn, Ic.wifiOff)
+        : (c.dangerSoft, c.danger, Ic.alert);
     return Semantics(
       liveRegion: true,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: warning ? P.warnSoft : P.dangerSoft,
-          borderRadius: BorderRadius.circular(8),
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: fg.withValues(alpha: 0.28)),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                warning ? Icons.wifi_off : Icons.error_outline,
-                color: color,
-                size: 20,
+              Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: Icon(icon, color: fg, size: 18),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(message, style: T.small.copyWith(color: color)),
+                child: Text(
+                  message,
+                  style: T.smallFor(c).copyWith(color: fg, fontWeight: FontWeight.w500),
+                ),
               ),
+              if (action != null) ...[
+                const SizedBox(width: 8),
+                action!,
+              ],
             ],
           ),
         ),

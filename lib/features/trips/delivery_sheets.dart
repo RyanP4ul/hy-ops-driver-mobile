@@ -1,12 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../../api/api_client.dart';
-import '../../data/models.dart';
+import '../../core/icons.dart';
 import '../../core/palette.dart';
-import '../../widgets/common.dart';
-import '../../widgets/workspace.dart';
+import '../../data/models.dart';
 import '../../state/app_state.dart';
+import '../../widgets/common.dart';
+import '../../widgets/payment.dart';
+import '../../widgets/workspace.dart';
 import 'proof_sheet.dart';
+
+const _quickFailReasons = [
+  'Customer unreachable',
+  'Address not found',
+  'Refused delivery',
+  'Business closed',
+  'Damaged goods',
+];
 
 Future<bool?> showDeliverySheet(
   BuildContext context,
@@ -17,6 +27,8 @@ Future<bool?> showDeliverySheet(
     context,
     stop.id,
     requiredForDelivery: true,
+    orderLabel: stop.orderLabel,
+    customer: stop.customer,
   );
   if (submitted != true || !context.mounted) return null;
   return _show(context, trip, stop, false);
@@ -43,6 +55,7 @@ class _OutcomeSheet extends StatefulWidget {
     required this.stop,
     required this.failed,
   });
+
   @override
   State<_OutcomeSheet> createState() => _OutcomeSheetState();
 }
@@ -51,6 +64,7 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
   final _reason = TextEditingController();
   bool _busy = false;
   String? _error;
+
   @override
   void dispose() {
     _reason.dispose();
@@ -65,7 +79,7 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
       return;
     }
     try {
-      AppScope.of(context).requireOnlineAction();
+      AppScope.of(context).requireSavedAction();
     } catch (e) {
       setState(() => _error = apiError(e));
       return;
@@ -89,92 +103,115 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
   }
 
   @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: !_busy,
-    child: SingleChildScrollView(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          24,
-          24,
-          24,
-          24 + MediaQuery.viewInsetsOf(context).bottom,
-        ),
-        child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                widget.failed ? 'Report failed attempt' : 'Confirm delivery',
-                style: Theme.of(context).textTheme.titleLarge,
+  Widget build(BuildContext context) {
+    final c = HyOpsColors.of(context);
+    final recipient = widget.stop.contact.isEmpty
+        ? widget.stop.customer
+        : widget.stop.contact;
+
+    return PopScope(
+      canPop: !_busy,
+      child: AppBottomSheet(
+        title: widget.failed ? 'Report failed attempt' : 'Confirm delivery',
+        subtitle: '${widget.stop.orderLabel} · ${widget.stop.customer}',
+        canClose: !_busy,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!widget.failed) PaymentBanner(widget.stop),
+            Text(
+              widget.failed
+                  ? 'Keep undelivered goods for warehouse return. Staff will reconcile the return.'
+                  : 'Confirm that all listed goods were handed to $recipient. Payment receipts are recorded separately by staff.',
+              style: T.bodyFor(c),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Saved actions remain pending until the server confirms them.',
+              style: T.smallFor(c),
+            ),
+            const SizedBox(height: 16),
+            Panel(
+              color: c.surfaceSubtle,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(widget.stop.orderLabel, style: T.bodyBoldFor(c)),
+                  const SizedBox(height: 2),
+                  Text(widget.stop.address, style: T.smallFor(c)),
+                  const SizedBox(height: 10),
+                  Divider(height: 1, color: c.line),
+                  const SizedBox(height: 10),
+                  for (final item in widget.stop.items)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        '${item.qty} × ${item.name}',
+                        style: T.bodyFor(c),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (widget.failed) ...[
+              const SizedBox(height: 16),
+              Text('Quick reason', style: T.smallBoldFor(c)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final preset in _quickFailReasons)
+                    ActionChip(
+                      label: Text(preset),
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() {
+                              _reason.text = preset;
+                              _error = null;
+                            }),
+                    ),
+                ],
               ),
               const SizedBox(height: 12),
-              Text(
-                widget.failed
-                    ? 'Keep undelivered goods for warehouse return. Staff will reconcile the return.'
-                    : 'Confirm that all listed goods were handed to ${widget.stop.contact}. Payment receipts are recorded separately by staff.',
-              ),
-              const SizedBox(height: 16),
-              Panel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(widget.stop.orderLabel, style: T.bodyBold),
-                    Text(widget.stop.address, style: T.small),
-                    const SizedBox(height: 12),
-                    const Divider(),
-                    const SizedBox(height: 8),
-                    for (final item in widget.stop.items)
-                      Text('${item.qty} × ${item.name}', style: T.body),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (widget.failed)
-                TextField(
-                  controller: _reason,
-                  maxLength: 500,
-                  minLines: 2,
-                  maxLines: 4,
-                  enabled: !_busy,
-                  decoration: const InputDecoration(labelText: 'Reason'),
-                ),
-              if (_error != null) FeedbackStrip(_error!),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  style: widget.failed
-                      ? FilledButton.styleFrom(
-                          backgroundColor: Theme.of(context).colorScheme.error,
-                          foregroundColor: Theme.of(context)
-                              .colorScheme
-                              .onError,
-                        )
-                      : null,
-                  onPressed: _busy || AppScope.of(context).isOffline
-                      ? null
-                      : _submit,
-                  child: Text(
-                    _busy
-                        ? 'Saving delivery...'
-                        : widget.failed
-                        ? 'Report failed attempt'
-                        : 'Confirm delivery',
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton(
-                  onPressed: _busy ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Go back'),
+              TextField(
+                controller: _reason,
+                maxLength: 500,
+                minLines: 2,
+                maxLines: 4,
+                enabled: !_busy,
+                decoration: const InputDecoration(
+                  labelText: 'Reason',
+                  hintText: 'Describe what happened at the stop...',
                 ),
               ),
             ],
-          ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              FeedbackStrip(_error!),
+            ],
+            const SizedBox(height: 16),
+            BigButton(
+              _busy
+                  ? 'Saving delivery...'
+                  : widget.failed
+                  ? 'Report failed attempt'
+                  : 'Confirm delivery',
+              icon: widget.failed ? Ic.warning : Ic.check,
+              style: widget.failed ? BtnStyle.danger : BtnStyle.primary,
+              busy: _busy,
+              onTap: _busy || !AppScope.of(context).canSaveActions
+                  ? null
+                  : _submit,
+            ),
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: _busy ? null : () => Navigator.of(context).pop(),
+              child: const Text('Go back'),
+            ),
+          ],
         ),
       ),
-    ),
-  );
+    );
+  }
 }

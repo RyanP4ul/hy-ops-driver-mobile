@@ -22,9 +22,32 @@ class MainShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
+    final c = HyOpsColors.of(context);
     final width = MediaQuery.sizeOf(context).width;
     final useRail = width >= 720;
     final extended = width >= 1080;
+    final hasActiveTrip = state.activeTrip != null;
+    final hasSyncAlert =
+        state.isOffline || state.pendingSyncCount > 0 || state.error != null;
+
+    Widget buildNavIcon(int index, IconData icon) {
+      if (index == 1 && hasActiveTrip) {
+        return Badge(
+          backgroundColor: c.primary,
+          smallSize: 8,
+          child: Icon(icon),
+        );
+      }
+      if (index == 3 && hasSyncAlert) {
+        return Badge(
+          backgroundColor: state.error != null ? c.danger : c.warn,
+          smallSize: 8,
+          child: Icon(icon),
+        );
+      }
+      return Icon(icon);
+    }
+
     final pages = IndexedStack(
       index: state.tab,
       children: const [
@@ -34,6 +57,7 @@ class MainShell extends StatelessWidget {
         ProfileScreen(),
       ],
     );
+
     return Scaffold(
       body: SafeArea(
         bottom: useRail,
@@ -41,11 +65,11 @@ class MainShell extends StatelessWidget {
             ? Row(
                 children: [
                   NavigationRail(
-                    backgroundColor: P.surface,
+                    backgroundColor: c.surface,
                     scrollable: true,
-                    indicatorColor: P.primarySoft,
+                    indicatorColor: c.primarySoft,
                     extended: extended,
-                    minExtendedWidth: 184,
+                    minExtendedWidth: 188,
                     labelType: extended ? null : NavigationRailLabelType.all,
                     leading: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -60,14 +84,14 @@ class MainShell extends StatelessWidget {
                     selectedIndex: state.tab,
                     onDestinationSelected: state.setTab,
                     destinations: [
-                      for (final (icon, label) in _destinations)
+                      for (var i = 0; i < _destinations.length; i++)
                         NavigationRailDestination(
-                          icon: Icon(icon),
-                          label: Text(label),
+                          icon: buildNavIcon(i, _destinations[i].$1),
+                          label: Text(_destinations[i].$2),
                         ),
                     ],
                   ),
-                  const VerticalDivider(width: 1),
+                  VerticalDivider(width: 1, color: c.line),
                   Expanded(child: pages),
                 ],
               )
@@ -75,14 +99,22 @@ class MainShell extends StatelessWidget {
       ),
       bottomNavigationBar: useRail
           ? null
-          : NavigationBar(
-              height: 64,
-              selectedIndex: state.tab,
-              onDestinationSelected: state.setTab,
-              destinations: [
-                for (final (icon, label) in _destinations)
-                  NavigationDestination(icon: Icon(icon), label: label),
-              ],
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: c.line)),
+              ),
+              child: NavigationBar(
+                height: 68,
+                selectedIndex: state.tab,
+                onDestinationSelected: state.setTab,
+                destinations: [
+                  for (var i = 0; i < _destinations.length; i++)
+                    NavigationDestination(
+                      icon: buildNavIcon(i, _destinations[i].$1),
+                      label: _destinations[i].$2,
+                    ),
+                ],
+              ),
             ),
     );
   }
